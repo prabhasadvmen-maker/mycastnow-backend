@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: mycastnow-backend
+    env: node
+    # Since render.yaml is inside the backend folder, rootDir is .
+    # If placed in project root, rootDir would be backend
+    rootDir: .
+    buildCommand: npm install
+    startCommand: node index.js
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: APITXT_API_KEY
+        sync: false
+      - key: R2_BUCKET
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
