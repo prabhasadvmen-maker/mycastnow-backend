@@ -3,9 +3,14 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import path from 'path';
+import fs from 'fs';
 import Company from '../models/Company.js';
 
 const router = express.Router();
+
+if (!fs.existsSync('uploads/companies')) {
+  fs.mkdirSync('uploads/companies', { recursive: true });
+}
 
 // Multer config for signup
 const storage = multer.diskStorage({

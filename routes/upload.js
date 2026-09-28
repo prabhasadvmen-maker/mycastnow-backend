@@ -9,24 +9,56 @@ dotenv.config();
 
 const router = express.Router();
 
-const s3 = new S3Client({
-  region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
-  credentials: {
-    accessKeyId: process.env.R2_ACCESS_KEY_ID,
-    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
-  }
-});
+const bucketName = process.env.R2_BUCKET || process.env.R2_BUCKET_NAME;
+const useR2 = Boolean(
+  bucketName &&
+  process.env.R2_ENDPOINT &&
+  process.env.R2_ACCESS_KEY_ID &&
+  process.env.R2_SECRET_ACCESS_KEY
+);
 
-const upload = multer({
-  storage: multerS3({
+let s3 = null;
+let storage;
+
+if (useR2) {
+  s3 = new S3Client({
+    region: 'auto',
+    endpoint: process.env.R2_ENDPOINT,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    }
+  });
+
+  storage = multerS3({
     s3: s3,
-    bucket: process.env.R2_BUCKET,
+    bucket: bucketName,
     key: function (req, file, cb) {
       const ext = path.extname(file.originalname);
-      cb(null, `portfolio/${Date.now().toString()}-${Math.round(Math.random()*1e9)}${ext}`);
+      cb(null, `portfolio/${Date.now().toString()}-${Math.round(Math.random() * 1e9)}${ext}`);
     }
-  }),
+  });
+} else {
+  // Local storage fallback for development / offline use
+  import('fs').then(fs => {
+    if (!fs.existsSync('uploads/portfolio')) {
+      fs.mkdirSync('uploads/portfolio', { recursive: true });
+    }
+  });
+
+  storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+      cb(null, 'uploads/portfolio');
+    },
+    filename: function (req, file, cb) {
+      const ext = path.extname(file.originalname);
+      cb(null, `${Date.now().toString()}-${Math.round(Math.random() * 1e9)}${ext}`);
+    }
+  });
+}
+
+const upload = multer({
+  storage: storage,
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit for videos
 });
 
@@ -37,8 +69,8 @@ router.post('/portfolio', upload.array('files', 10), (req, res) => {
     }
     
     const fileUrls = req.files.map(file => {
-      // Use our proxy route instead of the broken R2 public URL
-      const backendUrl = `${req.protocol}://${req.get('host')}/api/upload/file/${file.key}`;
+      const fileKey = file.key || `portfolio/${file.filename}`;
+      const backendUrl = `${req.protocol}://${req.get('host')}/api/upload/file/${fileKey}`;
       return {
         url: backendUrl,
         type: file.mimetype
@@ -52,28 +84,39 @@ router.post('/portfolio', upload.array('files', 10), (req, res) => {
   }
 });
 
-// Proxy route to fetch files from R2
+// Proxy route to fetch files from R2 or local storage
 router.get(/^\/file\/(.+)$/, async (req, res) => {
   try {
     const key = req.params[0]; 
     
-    const command = new GetObjectCommand({
-      Bucket: process.env.R2_BUCKET,
-      Key: key
-    });
-    
-    const response = await s3.send(command);
-    
-    if (response.ContentType) {
-      res.setHeader('Content-Type', response.ContentType);
+    if (useR2 && s3) {
+      const command = new GetObjectCommand({
+        Bucket: bucketName,
+        Key: key
+      });
+      
+      const response = await s3.send(command);
+      
+      if (response.ContentType) {
+        res.setHeader('Content-Type', response.ContentType);
+      }
+      if (response.ContentLength) {
+        res.setHeader('Content-Length', response.ContentLength);
+      }
+      
+      return response.Body.pipe(res);
+    } else {
+      const fs = await import('fs');
+      const normalizedKey = key.replace(/\\/g, '/');
+      const localFilePath = path.join(process.cwd(), 'uploads', normalizedKey);
+      
+      if (fs.existsSync(localFilePath)) {
+        return res.sendFile(localFilePath);
+      }
+      return res.status(404).json({ error: 'File not found' });
     }
-    if (response.ContentLength) {
-      res.setHeader('Content-Length', response.ContentLength);
-    }
-    
-    response.Body.pipe(res);
   } catch (error) {
-    console.error('Error fetching file from R2:', error);
+    console.error('Error fetching file:', error);
     res.status(404).json({ error: 'File not found' });
   }
 });

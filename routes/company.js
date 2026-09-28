@@ -8,7 +8,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 const router = express.Router();
 
-const useR2 = process.env.R2_ENDPOINT && process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY;
+const bucketName = process.env.R2_BUCKET || process.env.R2_BUCKET_NAME;
+const useR2 = Boolean(
+  bucketName &&
+  process.env.R2_ENDPOINT &&
+  process.env.R2_ACCESS_KEY_ID &&
+  process.env.R2_SECRET_ACCESS_KEY
+);
 let storage;
 
 if (useR2) {
@@ -23,7 +29,7 @@ if (useR2) {
 
   storage = multerS3({
     s3: s3,
-    bucket: process.env.R2_BUCKET_NAME || 'default-bucket',
+    bucket: bucketName,
     metadata: function (req, file, cb) {
       cb(null, {fieldName: file.fieldname});
     },
