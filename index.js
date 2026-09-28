@@ -7,6 +7,8 @@ import companyRoutes from './routes/company.js';
 import companyAuthRoutes from './routes/companyAuth.js';
 import creatorAuthRoutes from './routes/creatorAuth.js';
 import adminCreatorsRoutes from './routes/adminCreators.js';
+import adminUsersRoutes from './routes/adminUsers.js';
+import adminCastingRoutes from './routes/adminCasting.js';
 import uploadRoutes from './routes/upload.js';
 
 dotenv.config();
@@ -28,6 +30,8 @@ app.use('/api/companyAuth', companyAuthRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/creatorAuth', creatorAuthRoutes);
 app.use('/api/admin/creators', adminCreatorsRoutes);
+app.use('/api/admin/users', adminUsersRoutes);
+app.use('/api/admin/casting', adminCastingRoutes);
 app.use('/api/upload', uploadRoutes);
 
 app.get('/api/dashboard/stats', (req, res) => {
