@@ -7,7 +7,6 @@ import companyRoutes from './routes/company.js';
 import companyAuthRoutes from './routes/companyAuth.js';
 import creatorAuthRoutes from './routes/creatorAuth.js';
 import adminCreatorsRoutes from './routes/adminCreators.js';
-<<<<<<< HEAD
 import adminCastingRoutes from './routes/adminCasting.js';
 import adminBookingsRoutes from './routes/adminBookings.js';
 import adminSubscriptionsRoutes from './routes/adminSubscriptions.js';
@@ -17,10 +16,7 @@ import boostApiRoutes from './routes/boostApi.js';
 import adminReviewsRoutes from './routes/adminReviews.js';
 import reviewApiRoutes from './routes/reviewApi.js';
 import adminAnalyticsRoutes from './routes/adminAnalytics.js';
-=======
 import adminUsersRoutes from './routes/adminUsers.js';
-import adminCastingRoutes from './routes/adminCasting.js';
->>>>>>> 1f70375fafd78a0f3779c2f53dc8f6e6fc24f30c
 import uploadRoutes from './routes/upload.js';
 import companyTalentRoutes from './routes/companyTalent.js';
 import companyCastingRoutes from './routes/companyCasting.js';
@@ -51,7 +47,6 @@ app.use('/api/companyAuth', companyAuthRoutes);
 app.use('/api/companies', companyRoutes);
 app.use('/api/creatorAuth', creatorAuthRoutes);
 app.use('/api/admin/creators', adminCreatorsRoutes);
-<<<<<<< HEAD
 app.use('/api/admin/casting', adminCastingRoutes);
 app.use('/api/casting', adminCastingRoutes);
 app.use('/api/admin/bookings', adminBookingsRoutes);
@@ -62,10 +57,7 @@ app.use('/api/boost', boostApiRoutes);
 app.use('/api/admin/reviews', adminReviewsRoutes);
 app.use('/api/reviews', reviewApiRoutes);
 app.use('/api/admin/analytics', adminAnalyticsRoutes);
-=======
 app.use('/api/admin/users', adminUsersRoutes);
-app.use('/api/admin/casting', adminCastingRoutes);
->>>>>>> 1f70375fafd78a0f3779c2f53dc8f6e6fc24f30c
 app.use('/api/upload', uploadRoutes);
 app.use('/api/company/talent', companyTalentRoutes);
 app.use('/api/talent', companyTalentRoutes);
