@@ -45,8 +45,19 @@ const companySchema = new mongoose.Schema({
   escrowBalance: { type: Number, default: 85000 },
 
   // Verification & Status
-  verified: { type: Boolean, default: true },
+  verified: { type: Boolean, default: false },
   isActive: { type: Boolean, default: true },
+
+  // Admin Approval Workflow
+  isApproved: { type: Boolean, default: false },
+  approvedAt: { type: Date, default: null },
+  approvedBy: { type: String, default: null },
+  rejectionReason: { type: String, default: '' },
+  approvalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'pending'
+  },
 
   // Subscription Details
   subscription: {

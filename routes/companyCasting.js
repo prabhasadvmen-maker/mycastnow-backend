@@ -23,17 +23,13 @@ const getCompanyId = (req) => {
 // ══════════════════════════════════════════════════════
 router.get('/', async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = getCompanyId(req);
+    if (!companyId) return res.status(401).json({ success: false, message: 'Authentication required' });
     const cId = new mongoose.Types.ObjectId(companyId);
 
     const { status, search } = req.query;
 
-    const query = {
-      $or: [
-        { company: cId },
-        { company: null } // Include unassigned platform test castings
-      ]
-    };
+    const query = { company: cId };
 
     if (status && status !== 'All') {
       query.status = status;
@@ -49,9 +45,7 @@ router.get('/', async (req, res) => {
       .lean();
 
     // Compute Company Casting KPIs
-    const allCompanyCastings = await Casting.find({
-      $or: [{ company: cId }, { company: null }]
-    }).lean();
+    const allCompanyCastings = await Casting.find({ company: cId }).lean();
 
     const totalCastings = allCompanyCastings.length;
     const openCastings = allCompanyCastings.filter(c => c.status === 'Open').length;
@@ -93,7 +87,8 @@ router.get('/', async (req, res) => {
 // ══════════════════════════════════════════════════════
 router.post('/', async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = getCompanyId(req);
+    if (!companyId) return res.status(401).json({ success: false, message: 'Authentication required' });
     const cId = new mongoose.Types.ObjectId(companyId);
 
     const {
@@ -118,18 +113,21 @@ router.post('/', async (req, res) => {
     const newCasting = new Casting({
       company: cId,
       title: title.trim(),
-      projectType: projectType || 'Brand Shoot',
-      roleType: roleType || 'Actor',
-      gender: gender || 'Any',
-      ageRange: ageRange || '20-30 Years',
-      location: location || 'Mumbai',
+      projectType: projectType || '',
+      roleType: roleType || '',
+      gender: gender || '',
+      ageRange: ageRange || '',
+      location: location || '',
       shootDates: shootDates || '',
-      budget: budget || '₹20,000 - ₹35,000 / day',
-      deadline: deadline ? new Date(deadline) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      budget: budget || '',
+      deadline: deadline ? new Date(deadline) : null,
       description: description || '',
       requirements: Array.isArray(requirements) ? requirements : (requirements ? requirements.split(',').map(s => s.trim()) : []),
-      image: image || 'https://images.unsplash.com/photo-1485846234645-a62644f84728?auto=format&fit=crop&w=800&q=80',
-      status: 'Open',
+      image: image || '',
+      status: 'Pending Approval',     // Not public until admin approves
+      adminApproved: false,
+      submittedByCompany: true,
+      approvalStatus: 'pending',
       applicantsCount: 0,
       applicants: []
     });

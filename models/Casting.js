@@ -60,8 +60,26 @@ const castingSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['Open', 'In Review', 'Closed', 'Draft', 'Archived'],
+    enum: ['Open', 'In Review', 'Closed', 'Draft', 'Archived', 'Pending Approval', 'Rejected'],
     default: 'Open'
+  },
+  // Admin Approval for company-submitted castings
+  adminApproved: {
+    type: Boolean,
+    default: false
+  },
+  submittedByCompany: {
+    type: Boolean,
+    default: false
+  },
+  approvalStatus: {
+    type: String,
+    enum: ['pending', 'approved', 'rejected'],
+    default: 'approved' // admin-created castings are auto-approved
+  },
+  rejectionReason: {
+    type: String,
+    default: ''
   },
   image: {
     type: String,

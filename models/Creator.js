@@ -11,6 +11,29 @@ const creatorSchema = new mongoose.Schema({
     sparse: true,
     unique: true
   },
+  password: {
+    type: String
+  },
+  socialLinks: {
+    instagram: { type: String, default: '' },
+    linkedin: { type: String, default: '' },
+    youtube: { type: String, default: '' },
+    imdb: { type: String, default: '' },
+    website: { type: String, default: '' }
+  },
+  settings: {
+    notifications: {
+      castingAlerts: { type: Boolean, default: true },
+      chatMessages: { type: Boolean, default: true },
+      payoutUpdates: { type: Boolean, default: true },
+      marketingEmails: { type: Boolean, default: false }
+    },
+    privacy: {
+      isProfilePublic: { type: Boolean, default: true },
+      showPhone: { type: Boolean, default: true },
+      showMeasurements: { type: Boolean, default: true }
+    }
+  },
   role: {
     type: String,
     default: 'creator'

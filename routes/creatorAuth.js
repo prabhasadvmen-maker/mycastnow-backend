@@ -1,7 +1,9 @@
 import express from 'express';
 import axios from 'axios';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import Creator from '../models/Creator.js';
+import HelpTicket from '../models/HelpTicket.js';
 
 const router = express.Router();
 
@@ -133,6 +135,128 @@ router.put('/update-profile', async (req, res) => {
   } catch (error) {
     console.error('Update profile error:', error);
     res.status(500).json({ success: false, message: 'Failed to update profile' });
+  }
+});
+
+// 5. Change or Set Password for Creator
+router.put('/change-password', async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ success: false, message: 'No token provided' });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+    const creator = await Creator.findById(decoded.id);
+
+    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
+
+    const { currentPassword, newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
+    }
+
+    // If creator already has a password set, verify current password
+    if (creator.password && currentPassword) {
+      const isMatch = await bcrypt.compare(currentPassword, creator.password);
+      if (!isMatch) {
+        return res.status(400).json({ success: false, message: 'Current password is incorrect' });
+      }
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    await Creator.findByIdAndUpdate(decoded.id, {
+      $set: { password: hashedPassword }
+    });
+
+    res.json({ success: true, message: 'Password updated successfully!' });
+  } catch (error) {
+    console.error('Creator change password error:', error);
+    res.status(500).json({ success: false, message: 'Failed to change password' });
+  }
+});
+
+// 6. Creator Support Tickets
+router.get('/tickets', async (req, res) => {
+  try {
+    let creatorId = null;
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+        creatorId = decoded.id;
+      } catch (e) {}
+    }
+
+    let creator = null;
+    if (creatorId) {
+      creator = await Creator.findById(creatorId);
+    }
+    if (!creator) {
+      creator = await Creator.findOne({ phone: '7599847194' }) || await Creator.findOne();
+    }
+
+    const filter = creator ? {
+      $or: [
+        { creatorId: creator._id },
+        { creatorPhone: creator.phone },
+        { senderType: 'Creator' }
+      ]
+    } : { senderType: 'Creator' };
+
+    const tickets = await HelpTicket.find(filter).sort({ createdAt: -1 });
+    res.json({ success: true, tickets });
+  } catch (error) {
+    console.error('Fetch creator tickets error:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
+  }
+});
+
+router.post('/tickets', async (req, res) => {
+  try {
+    let creatorId = null;
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+        creatorId = decoded.id;
+      } catch (e) {}
+    }
+
+    let creator = null;
+    if (creatorId) {
+      creator = await Creator.findById(creatorId);
+    }
+    if (!creator) {
+      creator = await Creator.findOne({ phone: '7599847194' }) || await Creator.findOne();
+    }
+
+    const { subject, category, priority, message } = req.body;
+    if (!subject || !message) {
+      return res.status(400).json({ success: false, message: 'Subject and message are required' });
+    }
+
+    const ticket = await HelpTicket.create({
+      subject,
+      category: category || 'General Query',
+      priority: priority || 'Medium',
+      message,
+      creatorId: creator?._id,
+      creatorName: creator?.basicDetails?.fullName || 'Creator',
+      creatorPhone: creator?.phone || '',
+      creatorEmail: creator?.email || '',
+      senderType: 'Creator'
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Support ticket submitted successfully! Our talent helpdesk will respond shortly.',
+      ticket
+    });
+  } catch (error) {
+    console.error('Create creator ticket error:', error);
+    res.status(500).json({ success: false, message: 'Failed to submit ticket' });
   }
 });
 

@@ -2,6 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
 import Company from '../models/Company.js';
+import HelpTicket from '../models/HelpTicket.js';
 
 const router = express.Router();
 
@@ -16,24 +17,37 @@ const getCompanyId = (req) => {
   }
 };
 
+// Helper to resolve company cleanly
+const resolveCompany = async (req) => {
+  const rawId = getCompanyId(req);
+  let company = null;
+  if (rawId && mongoose.Types.ObjectId.isValid(rawId)) {
+    company = await Company.findById(rawId);
+  }
+  if (!company) {
+    company = await Company.findOne();
+  }
+  return company;
+};
+
 // ══════════════════════════════════════════════════════
 //  GET / — Company Profile Details
 // ══════════════════════════════════════════════════════
 router.get('/', async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
-    const cId = new mongoose.Types.ObjectId(companyId);
-
-    const company = await Company.findById(cId).select('-password').lean();
+    const company = await resolveCompany(req);
     if (!company) {
       return res.status(404).json({ success: false, message: 'Company not found' });
     }
 
+    const compObj = company.toObject ? company.toObject() : company;
+    delete compObj.password;
+
     res.json({
       success: true,
       company: {
-        ...company,
-        id: company._id
+        ...compObj,
+        id: compObj._id
       }
     });
 
@@ -48,8 +62,10 @@ router.get('/', async (req, res) => {
 // ══════════════════════════════════════════════════════
 router.put('/', async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
-    const cId = new mongoose.Types.ObjectId(companyId);
+    const company = await resolveCompany(req);
+    if (!company) {
+      return res.status(404).json({ success: false, message: 'Company not found' });
+    }
 
     const {
       name,
@@ -94,14 +110,10 @@ router.put('/', async (req, res) => {
     if (socialLinks) updateFields.socialLinks = socialLinks;
 
     const updated = await Company.findByIdAndUpdate(
-      cId,
+      company._id,
       { $set: updateFields },
       { returnDocument: 'after' }
     ).select('-password');
-
-    if (!updated) {
-      return res.status(404).json({ success: false, message: 'Company not found' });
-    }
 
     res.json({
       success: true,
@@ -111,6 +123,62 @@ router.put('/', async (req, res) => {
 
   } catch (err) {
     console.error('Update company profile error:', err);
+    res.status(500).json({ success: false, message: 'Server error', error: err.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════
+//  Support Tickets for Company
+// ══════════════════════════════════════════════════════
+router.get('/tickets', async (req, res) => {
+  try {
+    const company = await resolveCompany(req);
+    const cId = company?._id;
+
+    const filter = cId ? {
+      $or: [
+        { companyId: cId },
+        { senderId: cId }
+      ]
+    } : { senderType: 'Company' };
+
+    const tickets = await HelpTicket.find(filter).sort({ createdAt: -1 });
+
+    res.json({ success: true, tickets });
+  } catch (err) {
+    console.error('Fetch company tickets error:', err);
+    res.status(500).json({ success: false, message: 'Server error', error: err.message });
+  }
+});
+
+router.post('/tickets', async (req, res) => {
+  try {
+    const company = await resolveCompany(req);
+    const cId = company?._id;
+
+    const { subject, category, priority, message } = req.body;
+    if (!subject || !message) {
+      return res.status(400).json({ success: false, message: 'Subject and message are required' });
+    }
+
+    const ticket = await HelpTicket.create({
+      subject,
+      category: category || 'General Query',
+      priority: priority || 'Medium',
+      message,
+      companyId: cId || undefined,
+      companyName: company?.name || 'Production Studio',
+      companyEmail: company?.email || '',
+      senderType: 'Company'
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Support ticket submitted successfully! Our team will respond shortly.',
+      ticket
+    });
+  } catch (err) {
+    console.error('Create company ticket error:', err);
     res.status(500).json({ success: false, message: 'Server error', error: err.message });
   }
 });

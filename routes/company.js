@@ -78,7 +78,10 @@ router.post('/', upload.single('logo'), async (req, res) => {
     }
 
     const newCompany = new Company({
-      name, email, password, industry, website, location, logo: logoUrl
+      name, email, password, industry, website, location, logo: logoUrl,
+      isApproved: true,           // Admin-created companies are auto-approved
+      approvalStatus: 'approved',
+      verified: true
     });
 
     await newCompany.save();
@@ -158,6 +161,60 @@ router.put('/:id/status', async (req, res) => {
     res.json({ message: 'Status updated successfully', isActive: company.isActive });
   } catch (err) {
     console.error('Error toggling status:', err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// Approve Company (Super Admin)
+router.put('/:id/approve', async (req, res) => {
+  try {
+    const company = await Company.findById(req.params.id);
+    if (!company) return res.status(404).json({ message: 'Company not found' });
+
+    company.isApproved = true;
+    company.approvalStatus = 'approved';
+    company.verified = true;
+    company.approvedAt = new Date();
+    company.approvedBy = req.body.approvedBy || 'Super Admin';
+    company.rejectionReason = '';
+    await company.save();
+
+    const companyResponse = company.toObject();
+    delete companyResponse.password;
+
+    res.json({ 
+      message: `Company "${company.name}" approved successfully`,
+      success: true,
+      company: companyResponse
+    });
+  } catch (err) {
+    console.error('Error approving company:', err);
+    res.status(500).json({ message: 'Server Error' });
+  }
+});
+
+// Reject Company (Super Admin)
+router.put('/:id/reject', async (req, res) => {
+  try {
+    const company = await Company.findById(req.params.id);
+    if (!company) return res.status(404).json({ message: 'Company not found' });
+
+    company.isApproved = false;
+    company.approvalStatus = 'rejected';
+    company.verified = false;
+    company.rejectionReason = req.body.reason || 'Does not meet platform requirements';
+    await company.save();
+
+    const companyResponse = company.toObject();
+    delete companyResponse.password;
+
+    res.json({ 
+      message: `Company "${company.name}" rejected`,
+      success: true,
+      company: companyResponse
+    });
+  } catch (err) {
+    console.error('Error rejecting company:', err);
     res.status(500).json({ message: 'Server Error' });
   }
 });

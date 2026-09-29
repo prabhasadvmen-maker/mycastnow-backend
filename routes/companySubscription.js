@@ -33,12 +33,13 @@ router.get('/', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Company not found' });
     }
 
-    // Available plans for companies
+    // Available plans for companies from MongoDB (Company or Both)
     let plans = await SubscriptionPlan.find({
+      isActive: { $ne: false },
       targetAudience: { $in: ['Company', 'Both'] }
-    }).sort({ monthlyPrice: 1 }).lean();
+    }).sort({ sortOrder: 1, monthlyPrice: 1 }).lean();
 
-    // If no plans in DB, provide default standard plans
+    // If no specific company plans yet, fallback to any active database plans or defaults
     if (plans.length === 0) {
       plans = [
         {

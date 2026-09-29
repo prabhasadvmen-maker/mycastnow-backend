@@ -12,7 +12,7 @@ import UserSubscription from '../models/UserSubscription.js';
 
 const router = express.Router();
 
-// Helper to extract or fallback creator
+// Resolve the authenticated creator only. Never substitute another user's profile.
 const getCreator = async (req) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
@@ -24,18 +24,9 @@ const getCreator = async (req) => {
       }
     }
   } catch (err) {
-    // fallback
+    return null;
   }
-
-  // Fallback to active/approved creator (e.g. Arvind Kumar phone 7599847194 or first creator)
-  let fallback = await Creator.findOne({ phone: '7599847194' });
-  if (!fallback) {
-    fallback = await Creator.findOne({ isApproved: true });
-  }
-  if (!fallback) {
-    fallback = await Creator.findOne();
-  }
-  return fallback;
+  return null;
 };
 
 // ══════════════════════════════════════════════════════
@@ -112,9 +103,9 @@ router.get('/overview', async (req, res) => {
         physicalDetails: creator.physicalDetails,
         stats: {
           totalBookings: Math.max(creator.stats?.totalBookings || 0, bookingsCount),
-          rating: creator.stats?.rating || 4.8,
-          reviewsCount: creator.stats?.reviewsCount || 14,
-          profileViews: 148
+          rating: creator.stats?.rating || 0,
+          reviewsCount: creator.stats?.reviewsCount || 0,
+          profileViews: creator.stats?.profileViews || 0
         },
         isApproved: creator.isApproved,
         completionScore
@@ -124,8 +115,8 @@ router.get('/overview', async (req, res) => {
         shortlistedCount,
         selectedCount,
         totalBookings: Math.max(creator.stats?.totalBookings || 0, bookingsCount),
-        profileViews: 148,
-        rating: creator.stats?.rating || 4.8
+        profileViews: creator.stats?.profileViews || 0,
+        rating: creator.stats?.rating || 0
       },
       recentApplications,
       recommendedCastings
@@ -143,21 +134,6 @@ router.get('/portfolio', async (req, res) => {
   try {
     const creator = await getCreator(req);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
-
-    // Ensure default portfolio arrays if empty
-    const portfolio = creator.portfolio || { photos: [], videos: [], campaigns: [] };
-    
-    // If photos are empty, provide professional curated default photos for demonstration
-    if (!portfolio.photos || portfolio.photos.length === 0) {
-      portfolio.photos = [
-        creator.basicDetails?.profilePhoto || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=800&q=80',
-        'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=800&q=80',
-        'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=800&q=80',
-        'https://images.unsplash.com/photo-1492562080023-ab3db95bfbce?auto=format&fit=crop&w=800&q=80'
-      ];
-      creator.portfolio = portfolio;
-      await creator.save();
-    }
 
     res.json({
       success: true,
@@ -515,65 +491,10 @@ router.get('/bookings', async (req, res) => {
     const creator = await getCreator(req);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
-    let bookings = await Booking.find({ creator: creator._id })
+    const bookings = await Booking.find({ creator: creator._id })
       .populate('company', 'name logo city website phone email')
       .sort({ createdAt: -1 })
       .lean();
-
-    // If no bookings exist yet, seed 2 realistic commercial project contracts so UI is vivid and functional
-    if (bookings.length === 0) {
-      let company = await Company.findOne();
-      if (!company) {
-        company = await Company.create({
-          name: 'Advmen Technologies',
-          email: 'casting@advmen.tech',
-          phone: '+91 98201 45892',
-          city: 'Mumbai',
-          status: 'approved',
-          isApproved: true
-        });
-      }
-
-      const sample1 = await Booking.create({
-        company: company._id,
-        creator: creator._id,
-        projectTitle: 'Festive TVC & Pan-India Hoarding Campaign',
-        projectType: 'Ad Film',
-        eventDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        location: 'Film City, Goregaon, Mumbai',
-        amount: 35000,
-        description: 'Lead commercial shoot for Diwali festive collection. 1 Day shoot, wardrobe and hair & makeup provided on set.',
-        status: 'Pending',
-        paymentStatus: 'Unpaid'
-      });
-
-      const sample2 = await Booking.create({
-        company: company._id,
-        creator: creator._id,
-        projectTitle: 'Lakme Fashion Week Ramp Walk Show',
-        projectType: 'Fashion Show',
-        eventDate: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000),
-        location: 'St. Regis Hotel, Lower Parel, Mumbai',
-        amount: 50000,
-        description: 'Runway presentation showstopper model. Rehearsals on 23rd, main show on 24th.',
-        status: 'Confirmed',
-        paymentStatus: 'Paid'
-      });
-
-      // Also create welcome message thread
-      await Message.create({
-        company: company._id,
-        creator: creator._id,
-        senderType: 'Company',
-        text: 'Hi Arvind! We loved your portfolio and sent you a booking offer for our upcoming Festive TVC shoot. Please check the dates and accept the booking so we can lock the schedule!',
-        projectReference: 'Festive TVC & Pan-India Hoarding Campaign'
-      });
-
-      bookings = await Booking.find({ creator: creator._id })
-        .populate('company', 'name logo city website phone email')
-        .sort({ createdAt: -1 })
-        .lean();
-    }
 
     res.json({
       success: true,
@@ -762,7 +683,7 @@ router.get('/wallet', async (req, res) => {
       await WalletTransaction.create({
         userId,
         userType: 'Creator',
-        userName: creator.basicDetails?.fullName || 'Arvind Kumar',
+        userName: creator.basicDetails?.fullName || '',
         userContact: creator.phone,
         type: 'Credit',
         amount: 50000,
@@ -776,7 +697,7 @@ router.get('/wallet', async (req, res) => {
       await WalletTransaction.create({
         userId,
         userType: 'Creator',
-        userName: creator.basicDetails?.fullName || 'Arvind Kumar',
+        userName: creator.basicDetails?.fullName || '',
         userContact: creator.phone,
         type: 'Withdrawal',
         amount: 20000,
@@ -787,7 +708,7 @@ router.get('/wallet', async (req, res) => {
         balanceAfter: 30000,
         payoutDetails: {
           payoutMethod: 'Bank Transfer',
-          accountHolder: creator.basicDetails?.fullName || 'Arvind Kumar',
+          accountHolder: creator.basicDetails?.fullName || '',
           bankName: 'HDFC Bank',
           accountNumber: 'XXXXXX4920',
           ifsc: 'HDFC0001234',
@@ -844,7 +765,7 @@ router.post('/wallet/withdraw', async (req, res) => {
     const tx = new WalletTransaction({
       userId: creator._id.toString(),
       userType: 'Creator',
-      userName: creator.basicDetails?.fullName || 'Arvind Kumar',
+      userName: creator.basicDetails?.fullName || '',
       userContact: creator.phone,
       type: 'Withdrawal',
       amount: withdrawAmount,
@@ -855,7 +776,7 @@ router.post('/wallet/withdraw', async (req, res) => {
       balanceAfter: Math.max(0, 30000 - withdrawAmount),
       payoutDetails: {
         payoutMethod: method || 'Bank Transfer',
-        accountHolder: creator.basicDetails?.fullName || 'Arvind Kumar',
+        accountHolder: creator.basicDetails?.fullName || '',
         bankName: bankName || 'Primary Bank',
         accountNumber: accountNumber ? `XXXXXX${accountNumber.slice(-4)}` : 'XXXXXX4920',
         ifsc: ifsc || 'HDFC0001234',
@@ -922,64 +843,60 @@ router.get('/subscription', async (req, res) => {
     const creator = await getCreator(req);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
+    // Fetch active database plans strictly for Creator or Both
+    const dbPlans = await SubscriptionPlan.find({
+      isActive: { $ne: false },
+      targetAudience: { $in: ['Creator', 'Both'] }
+    }).sort({ sortOrder: 1, monthlyPrice: 1 }).lean();
+
+    const formattedPlans = dbPlans.map((p) => ({
+      id: p._id.toString(),
+      _id: p._id.toString(),
+      name: p.name,
+      description: p.description || '',
+      price: p.monthlyPrice ?? 0,
+      monthlyPrice: p.monthlyPrice ?? 0,
+      yearlyPrice: p.yearlyPrice ?? 0,
+      currency: p.currency || 'INR',
+      targetAudience: p.targetAudience,
+      popular: Boolean(p.isPopular),
+      isPopular: Boolean(p.isPopular),
+      trialDays: p.trialDays || 0,
+      features: p.features && p.features.length > 0 ? p.features : [
+        p.maxCastingApplications === -1 ? 'Unlimited Casting Call Applications' : `${p.maxCastingApplications} Applications / Month`,
+        p.maxPortfolioPhotos === -1 ? 'Unlimited Portfolio Photos & Reels' : `${p.maxPortfolioPhotos} Media Uploads`,
+        p.verifiedBadge ? 'Verified Talent Blue Badge' : 'Public Directory Listing',
+        p.prioritySupport ? '24/7 Dedicated Support' : 'Standard Support'
+      ]
+    }));
+
+    // Check user active subscription
+    const userSub = await UserSubscription.findOne({
+      userId: creator._id,
+      status: 'Active'
+    }).populate('plan').lean().catch(() => null);
+
+    const currentPlanName = userSub?.planName || userSub?.plan?.name || creator.subscriptionPlan || 'Free Starter';
+    const currentPrice = userSub?.amountPaid || userSub?.plan?.monthlyPrice || 0;
+
     res.json({
       success: true,
       currentPlan: {
-        planName: 'Pro Creator VIP',
-        price: 999,
-        billingCycle: 'Monthly',
-        status: 'Active',
-        expiryDate: new Date(Date.now() + 85 * 24 * 60 * 60 * 1000),
-        features: [
-          'Unlimited Casting Call Applications',
-          'Verified Talent Badge on Search',
-          'Direct Messaging with Casting Directors',
-          '0% Platform Booking Commission',
-          'Priority Audition Listing'
+        planName: currentPlanName,
+        price: currentPrice,
+        billingCycle: userSub?.billingCycle || 'Monthly',
+        status: userSub?.status || 'Active',
+        expiryDate: userSub?.endDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        features: userSub?.plan?.features || [
+          'Direct Casting Call Applications',
+          'Verified Talent Profile',
+          'Direct Messaging with Casting Directors'
         ]
       },
-      plans: [
-        {
-          id: 'free',
-          name: 'Starter Creator',
-          price: 0,
-          billing: 'Free Forever',
-          description: 'Basic access to public casting calls',
-          features: ['5 Applications / month', 'Standard Profile', 'Chat on Booking Only', '10% Commission']
-        },
-        {
-          id: 'pro',
-          name: 'Pro Creator VIP',
-          price: 999,
-          billing: 'per month',
-          popular: true,
-          description: 'Essential toolkit for working professional models & actors',
-          features: [
-            'Unlimited Casting Applications',
-            'Verified Talent Badge',
-            'Instant Chat with Producers',
-            '0% Commission on Direct Hires',
-            'Featured on Find Talent Top 10'
-          ]
-        },
-        {
-          id: 'elite',
-          name: 'Elite Celebrity Agency Tier',
-          price: 2499,
-          billing: 'per month',
-          description: 'For top-tier talent seeking lead roles in web series & films',
-          features: [
-            'All Pro VIP Features',
-            'Dedicated Casting Agent Manager',
-            'Custom Showreel Hosting & Highlights',
-            'Guaranteed Audition Slot Review',
-            'Legal Contract & Escrow Advisory'
-          ]
-        }
-      ]
+      plans: formattedPlans
     });
   } catch (error) {
-    console.error('Error fetching subscription:', error);
+    console.error('Error fetching creator subscription:', error);
     res.status(500).json({ success: false, message: 'Server error' });
   }
 });
