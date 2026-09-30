@@ -36,13 +36,18 @@ if (!process.env.JWT_SECRET) {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const allowedOrigins = [
+  'http://localhost:5173', 
+  'http://localhost:3000', 
+  'https://mycastnow.com', 
+  'https://www.mycastnow.com',
+  // Agar Vercel wagaira ka koi aur URL ho to yahan add kar lena
+];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    // Industrial grade dynamic CORS: Safely mirrors the requested origin
-    // Allows seamless access from Vercel preview URLs, production domains, and localhost
-    // while still satisfying the strict requirements for credentials=true.
-    callback(null, true);
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true
 }));
