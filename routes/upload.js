@@ -1,6 +1,5 @@
 import express from 'express';
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
 import dotenv from 'dotenv';
@@ -80,6 +79,7 @@ router.post('/presigned-url', async (req, res) => {
         ContentType: fileType
       });
       
+      const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
       const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
       const backendUrl = `${req.protocol}://${req.get('host')}/api/upload/file/${key}`;
       
