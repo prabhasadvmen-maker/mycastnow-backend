@@ -6,8 +6,9 @@ import Creator from '../models/Creator.js';
 import HelpTicket from '../models/HelpTicket.js';
 
 const router = express.Router();
+const JWT_SECRET = process.env.JWT_SECRET;
 
-// In-memory OTP store (Use Redis for production)
+// In-memory OTP store (Use Redis for production multi-instance)
 const otpStore = {};
 
 // 1. Send OTP
@@ -18,9 +19,8 @@ router.post('/send-otp', async (req, res) => {
   }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore[phone] = { otp, expiry: Date.now() + 5 * 60 * 1000 }; // 5 min expiry
+  otpStore[phone] = { otp, expiry: Date.now() + 5 * 60 * 1000 };
 
-  // Fire and forget the SMS to APITxT so the user doesn't wait for the network request!
   axios.post('https://apitxt.com/api/sendOTP', new URLSearchParams({
     authkey: process.env.APITXT_API_KEY,
     mobile: phone,
@@ -35,8 +35,13 @@ router.post('/send-otp', async (req, res) => {
     console.error('APITxT Error in background:', err.response?.data || err.message);
   });
 
-  // Return instantly for the "fast wala kam" magic auto-fill
-  res.json({ success: true, message: 'OTP sent instantly', devOtp: otp });
+  const responsePayload = { success: true, message: 'OTP sent successfully' };
+  // Only expose OTP in non-production for testing
+  if (process.env.NODE_ENV !== 'production') {
+    responsePayload.devOtp = otp;
+  }
+
+  res.json(responsePayload);
 });
 
 // 2. Verify OTP & Login/Signup
@@ -48,16 +53,13 @@ router.post('/verify-otp', async (req, res) => {
   if (Date.now() > record.expiry) return res.status(400).json({ success: false, message: 'OTP expired' });
   if (record.otp !== otp) return res.status(400).json({ success: false, message: 'Invalid OTP' });
 
-  // OTP is correct, clear it
   delete otpStore[phone];
 
   try {
-    // Check if creator exists
     let creator = await Creator.findOne({ phone });
     let isNewUser = false;
 
     if (!creator) {
-      // Create new creator
       creator = new Creator({
         phone,
         onboardingStep: 1,
@@ -67,7 +69,6 @@ router.post('/verify-otp', async (req, res) => {
       await creator.save();
       isNewUser = true;
     } else {
-      // If creator exists, check if they are rejected or disabled
       if (creator.status === 'rejected') {
         const reason = creator.rejectionReason || 'No specific reason provided.';
         return res.status(403).json({ success: false, message: `Your profile was rejected. Reason: ${reason}` });
@@ -77,10 +78,9 @@ router.post('/verify-otp', async (req, res) => {
       }
     }
 
-    // Generate JWT
     const token = jwt.sign(
       { id: creator._id, phone: creator.phone, role: 'creator' },
-      process.env.JWT_SECRET || 'fallback_secret_for_dev_only',
+      JWT_SECRET,
       { expiresIn: '30d' }
     );
 
@@ -104,30 +104,28 @@ router.get('/me', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'No token provided' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const creator = await Creator.findById(decoded.id);
 
     if (!creator) return res.status(404).json({ message: 'Creator not found' });
-    
+
     res.json(creator);
   } catch (error) {
     res.status(401).json({ message: 'Invalid token' });
   }
 });
 
-// 4. Update Creator Profile (For Onboarding & Settings)
+// 4. Update Creator Profile
 router.put('/update-profile', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'No token provided' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-    
-    const updateData = req.body;
-    
+    const decoded = jwt.verify(token, JWT_SECRET);
+
     const updatedCreator = await Creator.findByIdAndUpdate(
       decoded.id,
-      { $set: updateData },
+      { $set: req.body },
       { returnDocument: 'after' }
     );
 
@@ -144,7 +142,7 @@ router.put('/change-password', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ success: false, message: 'No token provided' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const creator = await Creator.findById(decoded.id);
 
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
@@ -155,7 +153,6 @@ router.put('/change-password', async (req, res) => {
       return res.status(400).json({ success: false, message: 'New password must be at least 6 characters' });
     }
 
-    // If creator already has a password set, verify current password
     if (creator.password && currentPassword) {
       const isMatch = await bcrypt.compare(currentPassword, creator.password);
       if (!isMatch) {
@@ -177,35 +174,23 @@ router.put('/change-password', async (req, res) => {
   }
 });
 
-// 6. Creator Support Tickets
+// 6. Creator Support Tickets — GET
 router.get('/tickets', async (req, res) => {
   try {
-    let creatorId = null;
     const token = req.headers.authorization?.split(' ')[1];
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-        creatorId = decoded.id;
-      } catch (e) {}
-    }
+    if (!token) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
-    let creator = null;
-    if (creatorId) {
-      creator = await Creator.findById(creatorId);
-    }
-    if (!creator) {
-      creator = await Creator.findOne({ phone: '7599847194' }) || await Creator.findOne();
-    }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const creator = await Creator.findById(decoded.id);
+    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
-    const filter = creator ? {
+    const tickets = await HelpTicket.find({
       $or: [
         { creatorId: creator._id },
-        { creatorPhone: creator.phone },
-        { senderType: 'Creator' }
+        { creatorPhone: creator.phone }
       ]
-    } : { senderType: 'Creator' };
+    }).sort({ createdAt: -1 });
 
-    const tickets = await HelpTicket.find(filter).sort({ createdAt: -1 });
     res.json({ success: true, tickets });
   } catch (error) {
     console.error('Fetch creator tickets error:', error);
@@ -213,24 +198,15 @@ router.get('/tickets', async (req, res) => {
   }
 });
 
+// 6b. Creator Support Tickets — POST
 router.post('/tickets', async (req, res) => {
   try {
-    let creatorId = null;
     const token = req.headers.authorization?.split(' ')[1];
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-        creatorId = decoded.id;
-      } catch (e) {}
-    }
+    if (!token) return res.status(401).json({ success: false, message: 'Unauthorized' });
 
-    let creator = null;
-    if (creatorId) {
-      creator = await Creator.findById(creatorId);
-    }
-    if (!creator) {
-      creator = await Creator.findOne({ phone: '7599847194' }) || await Creator.findOne();
-    }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const creator = await Creator.findById(decoded.id);
+    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const { subject, category, priority, message } = req.body;
     if (!subject || !message) {
@@ -242,10 +218,10 @@ router.post('/tickets', async (req, res) => {
       category: category || 'General Query',
       priority: priority || 'Medium',
       message,
-      creatorId: creator?._id,
-      creatorName: creator?.basicDetails?.fullName || 'Creator',
-      creatorPhone: creator?.phone || '',
-      creatorEmail: creator?.email || '',
+      creatorId: creator._id,
+      creatorName: creator.basicDetails?.fullName || 'Creator',
+      creatorPhone: creator.phone || '',
+      creatorEmail: creator.email || '',
       senderType: 'Creator'
     });
 

@@ -7,12 +7,14 @@ import fs from 'fs';
 import Company from '../models/Company.js';
 
 const router = express.Router();
+const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!fs.existsSync('uploads/companies')) {
   fs.mkdirSync('uploads/companies', { recursive: true });
 }
 
-// Multer config for signup
+const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, 'uploads/companies/');
@@ -21,13 +23,23 @@ const storage = multer.diskStorage({
     cb(null, Date.now() + path.extname(file.originalname));
   }
 });
-const upload = multer({ storage });
+
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIME_TYPES.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files (jpg, png, webp, gif) are allowed'));
+    }
+  },
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+});
 
 router.post('/signup', upload.single('logo'), async (req, res) => {
   try {
     const { name, email, password, industry, website, location } = req.body;
-    
-    // Check if email exists
+
     const existing = await Company.findOne({ email });
     if (existing) {
       return res.status(400).json({ message: 'Email already exists' });
@@ -41,18 +53,19 @@ router.post('/signup', upload.single('logo'), async (req, res) => {
       website,
       location,
       isActive: true,
-      isApproved: false,        // Requires super admin approval
+      isApproved: false,
       approvalStatus: 'pending'
     };
 
     if (req.file) {
-      companyData.logo = `${req.protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
+      // Use x-forwarded-proto for correct HTTPS detection behind proxy
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      companyData.logo = `${protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
     }
 
     const newCompany = new Company(companyData);
     await newCompany.save();
 
-    // Do NOT issue a dashboard token on signup – just confirm registration
     const companyResponse = newCompany.toObject();
     delete companyResponse.password;
 
@@ -63,11 +76,11 @@ router.post('/signup', upload.single('logo'), async (req, res) => {
     });
   } catch (err) {
     console.error('Signup error:', err);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: err.message || 'Server error' });
   }
 });
 
-// Check company approval status by email (for waiting screen)
+// Check company approval status by email
 router.get('/status', async (req, res) => {
   try {
     const { email } = req.query;
@@ -112,17 +125,14 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Check approval status
     const isCompanyApproved = company.isApproved === true || company.approvalStatus === 'approved';
 
-    // If rejected
     if (company.approvalStatus === 'rejected') {
-      return res.status(403).json({ 
-        message: `Your company application was declined. Reason: ${company.rejectionReason || 'Does not meet requirements'}` 
+      return res.status(403).json({
+        message: `Your company application was declined. Reason: ${company.rejectionReason || 'Does not meet requirements'}`
       });
     }
 
-    // If not approved yet – return 202 with pendingApproval flag (not an error, show waiting screen)
     if (!isCompanyApproved) {
       const companyResponse = company.toObject();
       delete companyResponse.password;
@@ -136,7 +146,7 @@ router.post('/login', async (req, res) => {
 
     const token = jwt.sign(
       { id: company._id, email: company.email, role: 'company' },
-      process.env.JWT_SECRET || 'fallback_secret_for_dev_only',
+      JWT_SECRET,
       { expiresIn: '7d' }
     );
 
@@ -154,17 +164,25 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// For Admin to login as a company without password
+// Admin impersonation — requires valid admin JWT
 router.post('/admin-login/:id', async (req, res) => {
   try {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ message: 'Unauthorized' });
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (decoded.role !== 'admin' && decoded.role !== 'superadmin') {
+      return res.status(403).json({ message: 'Forbidden: Admin access required' });
+    }
+
     const company = await Company.findById(req.params.id);
     if (!company) {
       return res.status(404).json({ message: 'Company not found' });
     }
 
-    const token = jwt.sign(
+    const companyToken = jwt.sign(
       { id: company._id, email: company.email, role: 'company' },
-      process.env.JWT_SECRET || 'fallback_secret_for_dev_only',
+      JWT_SECRET,
       { expiresIn: '1d' }
     );
 
@@ -173,7 +191,7 @@ router.post('/admin-login/:id', async (req, res) => {
 
     res.json({
       message: 'Admin impersonation successful',
-      token,
+      token: companyToken,
       company: companyResponse
     });
   } catch (error) {
@@ -186,13 +204,13 @@ router.get('/me', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'Unauthorized' });
-    
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+
+    const decoded = jwt.verify(token, JWT_SECRET);
     const company = await Company.findById(decoded.id).select('-password');
-    
+
     if (!company) return res.status(404).json({ message: 'Company not found' });
     if (!company.isActive) return res.status(403).json({ message: 'Account disabled' });
-    
+
     res.json(company);
   } catch (error) {
     res.status(401).json({ message: 'Invalid token' });
@@ -205,7 +223,7 @@ router.put('/change-password', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+    const decoded = jwt.verify(token, JWT_SECRET);
     const company = await Company.findById(decoded.id);
 
     if (!company) {
@@ -218,7 +236,6 @@ router.put('/change-password', async (req, res) => {
       return res.status(400).json({ success: false, message: 'New password must be at least 6 characters long' });
     }
 
-    // Verify current password if provided
     if (currentPassword) {
       const isMatch = await bcrypt.compare(currentPassword, company.password);
       if (!isMatch) {
@@ -226,7 +243,6 @@ router.put('/change-password', async (req, res) => {
       }
     }
 
-    // Hash and update password
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
@@ -250,8 +266,8 @@ router.put('/update-profile', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ success: false, message: 'Unauthorized: No token provided' });
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-    
+    const decoded = jwt.verify(token, JWT_SECRET);
+
     const allowedFields = [
       'name', 'phone', 'industry', 'website', 'location',
       'tagline', 'description', 'address', 'city', 'state',

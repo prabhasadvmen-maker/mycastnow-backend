@@ -4,6 +4,7 @@ import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
 
 const router = express.Router();
+const JWT_SECRET = process.env.JWT_SECRET;
 
 router.post('/login', async (req, res) => {
   try {
@@ -25,7 +26,7 @@ router.post('/login', async (req, res) => {
 
     const token = jwt.sign(
       { id: admin._id, email: admin.email, role: admin.role },
-      process.env.JWT_SECRET || 'fallback_secret_for_dev_only',
+      JWT_SECRET,
       { expiresIn: '1d' }
     );
 
@@ -48,43 +49,27 @@ router.get('/me', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return res.status(401).json({ message: 'Unauthorized' });
-    
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+
+    const decoded = jwt.verify(token, JWT_SECRET);
     const admin = await Admin.findById(decoded.id).select('-password');
-    
+
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
-    
+
     res.json(admin);
   } catch (error) {
     res.status(401).json({ message: 'Invalid token' });
   }
 });
 
-// Update Admin Profile (name, email, phone, avatar, bio, notificationPreferences)
+// Update Admin Profile
 router.put('/profile', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    let adminId = null;
+    if (!token) return res.status(401).json({ message: 'Unauthorized' });
 
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-        adminId = decoded.id;
-      } catch (e) {
-        console.warn('JWT verification failed, checking fallback');
-      }
-    }
-
-    let admin = null;
-    if (adminId) {
-      admin = await Admin.findById(adminId);
-    }
-    if (!admin) {
-      admin = await Admin.findOne();
-    }
-    if (!admin) {
-      return res.status(404).json({ message: 'Admin account not found' });
-    }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const admin = await Admin.findById(decoded.id);
+    if (!admin) return res.status(404).json({ message: 'Admin account not found' });
 
     const { name, email, phone, avatar, bio, notificationPreferences } = req.body;
 
@@ -127,27 +112,11 @@ router.put('/profile', async (req, res) => {
 router.put('/change-password', async (req, res) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
-    let adminId = null;
+    if (!token) return res.status(401).json({ message: 'Unauthorized' });
 
-    if (token) {
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-        adminId = decoded.id;
-      } catch (e) {
-        console.warn('JWT verify error');
-      }
-    }
-
-    let admin = null;
-    if (adminId) {
-      admin = await Admin.findById(adminId);
-    }
-    if (!admin) {
-      admin = await Admin.findOne();
-    }
-    if (!admin) {
-      return res.status(404).json({ message: 'Admin account not found' });
-    }
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const admin = await Admin.findById(decoded.id);
+    if (!admin) return res.status(404).json({ message: 'Admin account not found' });
 
     const { currentPassword, newPassword, confirmPassword } = req.body;
 
@@ -163,13 +132,11 @@ router.put('/change-password', async (req, res) => {
       return res.status(400).json({ message: 'New password and confirmation do not match' });
     }
 
-    // Verify current password
     const isMatch = await bcrypt.compare(currentPassword, admin.password);
     if (!isMatch) {
       return res.status(400).json({ message: 'Incorrect current password' });
     }
 
-    // Hash and save new password
     const salt = await bcrypt.genSalt(10);
     admin.password = await bcrypt.hash(newPassword, salt);
     await admin.save();
