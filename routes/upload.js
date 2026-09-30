@@ -1,5 +1,6 @@
 import express from 'express';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
 import dotenv from 'dotenv';
@@ -60,6 +61,36 @@ if (useR2) {
 const upload = multer({
   storage: storage,
   limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit for videos
+});
+
+router.post('/presigned-url', async (req, res) => {
+  try {
+    const { filename, fileType } = req.body;
+    if (!filename || !fileType) {
+      return res.status(400).json({ error: 'Filename and fileType are required' });
+    }
+    
+    const ext = path.extname(filename);
+    const key = `portfolio/${Date.now().toString()}-${Math.round(Math.random() * 1e9)}${ext}`;
+    
+    if (useR2 && s3) {
+      const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: key,
+        ContentType: fileType
+      });
+      
+      const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+      const backendUrl = `${req.protocol}://${req.get('host')}/api/upload/file/${key}`;
+      
+      res.json({ success: true, uploadUrl, fileUrl: backendUrl, key });
+    } else {
+      res.status(400).json({ error: 'R2 is not configured on the server' });
+    }
+  } catch (error) {
+    console.error('Presigned URL error:', error);
+    res.status(500).json({ error: 'Failed to generate pre-signed URL' });
+  }
 });
 
 router.post('/portfolio', upload.array('files', 10), (req, res) => {

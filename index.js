@@ -1,7 +1,8 @@
+import 'dotenv/config';
 import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
-import dotenv from 'dotenv';
+
 import authRoutes from './routes/auth.js';
 import companyRoutes from './routes/company.js';
 import companyAuthRoutes from './routes/companyAuth.js';
@@ -27,8 +28,6 @@ import companyProfileRoutes from './routes/companyProfile.js';
 import creatorPortalRoutes from './routes/creatorPortal.js';
 import adminSettingsRoutes from './routes/adminSettings.js';
 import publicLandingRoutes from './routes/publicLanding.js';
-
-dotenv.config();
 
 if (!process.env.JWT_SECRET) {
   console.error('FATAL ERROR: JWT_SECRET environment variable is not set!');
