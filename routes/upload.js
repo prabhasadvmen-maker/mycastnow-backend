@@ -81,7 +81,8 @@ router.post('/presigned-url', async (req, res) => {
       
       const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
       const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-      const backendUrl = `${req.protocol}://${req.get('host')}/api/upload/file/${key}`;
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const backendUrl = `${protocol}://${req.get('host')}/api/upload/file/${key}`;
       
       res.json({ success: true, uploadUrl, fileUrl: backendUrl, key });
     } else {
@@ -101,7 +102,8 @@ router.post('/portfolio', upload.array('files', 10), (req, res) => {
     
     const fileUrls = req.files.map(file => {
       const fileKey = file.key || `portfolio/${file.filename}`;
-      const backendUrl = `${req.protocol}://${req.get('host')}/api/upload/file/${fileKey}`;
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const backendUrl = `${protocol}://${req.get('host')}/api/upload/file/${fileKey}`;
       return {
         url: backendUrl,
         type: file.mimetype
