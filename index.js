@@ -46,6 +46,10 @@ if (!process.env.JWT_SECRET) {
 }
 
 const app = express();
+
+// Trust reverse proxy (Nginx) for express-rate-limit
+app.set('trust proxy', 1);
+
 const PORT = process.env.PORT || 5000;
 
 // ── Security Headers (Helmet) ────────────────────────────────────────────────
