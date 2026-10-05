@@ -230,7 +230,7 @@ router.post('/login', async (req, res) => {
 router.post('/admin-login/:id', verifyToken, async (req, res) => {
   try {
     // BUG 5 FIX: use verifyToken middleware — req.user is already verified
-    if (req.user.role !== 'admin' && req.user.role !== 'superadmin') {
+    if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'Super Admin') {
       return res.status(403).json({ message: 'Forbidden: Admin access required' });
     }
 

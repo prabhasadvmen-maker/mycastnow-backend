@@ -237,7 +237,7 @@ router.put('/plans/:id', async (req, res) => {
     const plan = await SubscriptionPlan.findByIdAndUpdate(
       req.params.id,
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!plan) return res.status(404).json({ message: 'Plan not found' });
     res.json(plan);
@@ -331,7 +331,7 @@ router.put('/subscribers/:id', async (req, res) => {
     if (endDate) update.endDate = new Date(endDate);
     if (notes !== undefined) update.notes = notes;
 
-    const sub = await UserSubscription.findByIdAndUpdate(req.params.id, { $set: update }, { new: true })
+    const sub = await UserSubscription.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after' })
       .populate('plan', 'name badgeColor monthlyPrice yearlyPrice');
     if (!sub) return res.status(404).json({ message: 'Subscription not found' });
     res.json(sub);

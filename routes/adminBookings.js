@@ -163,7 +163,7 @@ router.put('/:id/status', async (req, res) => {
     const booking = await Booking.findByIdAndUpdate(
       req.params.id,
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     )
       .populate('company', 'name email logo location industry')
       .populate('creator', 'basicDetails.fullName basicDetails.profilePhoto professionalDetails.primaryCategory phone');
@@ -203,7 +203,7 @@ router.put('/:id', async (req, res) => {
     const booking = await Booking.findByIdAndUpdate(
       req.params.id,
       { $set: update },
-      { new: true }
+      { returnDocument: 'after' }
     )
       .populate('company', 'name email logo location industry')
       .populate('creator', 'basicDetails.fullName basicDetails.profilePhoto professionalDetails.primaryCategory phone');

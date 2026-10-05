@@ -305,7 +305,7 @@ router.put('/plans/:id', async (req, res) => {
     const updated = await BoostPlan.findByIdAndUpdate(
       req.params.id,
       { $set: req.body },
-      { new: true, runValidators: true }
+      { returnDocument: 'after', runValidators: true }
     );
     if (!updated) return res.status(404).json({ success: false, message: 'Plan not found' });
     res.json({ success: true, message: 'Plan updated successfully', data: updated });

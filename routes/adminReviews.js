@@ -121,7 +121,7 @@ router.put('/:id/status', async (req, res) => {
     const updated = await Review.findByIdAndUpdate(
       req.params.id,
       { $set: { status } },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!updated) {

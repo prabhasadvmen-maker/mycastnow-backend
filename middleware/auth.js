@@ -16,7 +16,7 @@ export const verifyToken = (req, res, next) => {
 
 export const requireAdmin = (req, res, next) => {
   verifyToken(req, res, () => {
-    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin')) {
+    if (!req.user || (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'Super Admin')) {
       return res.status(403).json({ message: 'Forbidden: Admin access required' });
     }
     next();

@@ -153,7 +153,7 @@ router.post('/withdraw', async (req, res) => {
             isVerified: true
           }
         },
-        { upsert: true, new: true }
+        { upsert: true, returnDocument: 'after' }
       );
     }
 
@@ -239,7 +239,7 @@ router.post('/bank-account', async (req, res) => {
           isVerified: true
         }
       },
-      { upsert: true, new: true }
+      { upsert: true, returnDocument: 'after' }
     );
 
     res.json({ success: true, message: 'Bank details saved successfully.', account: updated });
@@ -326,7 +326,7 @@ router.put('/transactions/:id/status', async (req, res) => {
     const update = { status };
     if (notes !== undefined) update.notes = notes;
 
-    const tx = await WalletTransaction.findByIdAndUpdate(req.params.id, { $set: update }, { new: true });
+    const tx = await WalletTransaction.findByIdAndUpdate(req.params.id, { $set: update }, { returnDocument: 'after' });
     if (!tx) return res.status(404).json({ message: 'Transaction not found' });
     res.json(tx);
   } catch (err) {

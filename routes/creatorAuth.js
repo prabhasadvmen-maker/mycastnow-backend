@@ -217,7 +217,7 @@ router.put('/update-profile', verifyToken, async (req, res) => {
     const updatedCreator = await Creator.findByIdAndUpdate(
       req.user.id,
       { $set: updates },
-      { new: true, runValidators: true }  // BUG 10 FIX: Mongoose uses `new:true`, not `returnDocument:'after'`
+      { returnDocument: 'after', runValidators: true }
     ).select('-password');
 
     if (!updatedCreator) return res.status(404).json({ success: false, message: 'Creator not found' });
