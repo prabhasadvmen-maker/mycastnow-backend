@@ -2,9 +2,12 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import Admin from '../models/Admin.js';
+import { verifyToken } from '../middleware/auth.js';
+import logger from '../config/logger.js';
+
+const JWT_SECRET = process.env.JWT_SECRET;
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET;
 
 router.post('/login', async (req, res) => {
   try {
@@ -40,35 +43,25 @@ router.post('/login', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Login error:', error);
+    logger.error('Login error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-router.get('/me', async (req, res) => {
+router.get('/me', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const admin = await Admin.findById(decoded.id).select('-password');
-
+    const admin = await Admin.findById(req.user.id).select('-password');
     if (!admin) return res.status(404).json({ message: 'Admin not found' });
-
     res.json(admin);
   } catch (error) {
-    res.status(401).json({ message: 'Invalid token' });
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
 // Update Admin Profile
-router.put('/profile', async (req, res) => {
+router.put('/profile', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const admin = await Admin.findById(decoded.id);
+    const admin = await Admin.findById(req.user.id);
     if (!admin) return res.status(404).json({ message: 'Admin account not found' });
 
     const { name, email, phone, avatar, bio, notificationPreferences } = req.body;
@@ -103,19 +96,15 @@ router.put('/profile', async (req, res) => {
       user: sanitizedAdmin
     });
   } catch (error) {
-    console.error('Update profile error:', error);
+    logger.error('Update profile error:', error);
     res.status(500).json({ message: error.message || 'Server error while updating profile' });
   }
 });
 
 // Change Admin Password
-router.put('/change-password', async (req, res) => {
+router.put('/change-password', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'Unauthorized' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const admin = await Admin.findById(decoded.id);
+    const admin = await Admin.findById(req.user.id);
     if (!admin) return res.status(404).json({ message: 'Admin account not found' });
 
     const { currentPassword, newPassword, confirmPassword } = req.body;
@@ -146,7 +135,7 @@ router.put('/change-password', async (req, res) => {
       message: 'Password has been updated successfully'
     });
   } catch (error) {
-    console.error('Change password error:', error);
+    logger.error('Change password error:', error);
     res.status(500).json({ message: error.message || 'Server error while updating password' });
   }
 });

@@ -2,6 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
 import Creator from '../models/Creator.js';
+import { verifyToken } from '../middleware/auth.js';
 import ProfileBoost from '../models/ProfileBoost.js';
 import TalentCart from '../models/TalentCart.js';
 import Booking from '../models/Booking.js';
@@ -10,21 +11,18 @@ import Message from '../models/Message.js';
 
 const router = express.Router();
 
-// Helper to extract company ID from Authorization header (optional or required)
-const getCompanyId = (req) => {
+// Optional auth helper — does NOT block the request if token is missing/invalid
+const getOptionalUserId = (req) => {
   try {
     const token = req.headers.authorization?.split(' ')[1];
     if (!token) return null;
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     return decoded?.id || null;
-  } catch (err) {
+  } catch {
     return null;
   }
 };
 
-// ══════════════════════════════════════════════════════
-//  GET / — Search, Filter & Browse All Talents with Pagination
-// ══════════════════════════════════════════════════════
 router.get('/', async (req, res) => {
   try {
     const {
@@ -42,7 +40,7 @@ router.get('/', async (req, res) => {
       limit = 8
     } = req.query;
 
-    const companyId = getCompanyId(req);
+    const companyId = getOptionalUserId(req);
 
     // Build Mongo Query
     const query = {
@@ -208,10 +206,12 @@ router.get('/', async (req, res) => {
     // Dynamic Metadata for Filters
     const allApprovedCreators = await Creator.find({ status: 'approved' }).lean();
     const categoriesSet = new Set();
+    const subCategoriesSet = new Set();
     const citiesSet = new Set();
 
     allApprovedCreators.forEach(c => {
       if (c.professionalDetails?.primaryCategory) categoriesSet.add(c.professionalDetails.primaryCategory);
+      if (c.professionalDetails?.subCategory) subCategoriesSet.add(c.professionalDetails.subCategory);
       if (c.basicDetails?.city) citiesSet.add(c.basicDetails.city);
     });
 
@@ -239,6 +239,7 @@ router.get('/', async (req, res) => {
       cartCount: cartCreatorIds.size,
       metadata: {
         categories: Array.from(categoriesSet),
+        subCategories: Array.from(subCategoriesSet),
         cities: Array.from(citiesSet),
         experienceLevels: ['Fresher', '1-3 Years', '3-5 Years', '5+ Years']
       }
@@ -254,9 +255,9 @@ router.get('/', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  POST /cart/toggle — Add/Remove from Talent Cart
 // ══════════════════════════════════════════════════════
-router.post('/cart/toggle', async (req, res) => {
+router.post('/cart/toggle', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const { creatorId, roleInterest, notes } = req.body;
 
     if (!creatorId) {
@@ -299,9 +300,9 @@ router.post('/cart/toggle', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  GET /cart/list — Get Company Cart Items
 // ══════════════════════════════════════════════════════
-router.get('/cart/list', async (req, res) => {
+router.get('/cart/list', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
 
     const items = await TalentCart.find({ company: cId })
@@ -323,9 +324,9 @@ router.get('/cart/list', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  POST /book — Direct Booking / Casting Call Invitation (FIXED)
 // ══════════════════════════════════════════════════════
-router.post('/book', async (req, res) => {
+router.post('/book', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const { creatorId, projectTitle, projectType, eventDate, location, amount, description } = req.body;
 
     if (!creatorId || !projectTitle || !eventDate) {
@@ -377,9 +378,9 @@ router.post('/book', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  GET /bookings — All Bookings / Hires of this Company
 // ══════════════════════════════════════════════════════
-router.get('/bookings', async (req, res) => {
+router.get('/bookings', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
 
     const bookings = await Booking.find({ company: cId })
@@ -404,9 +405,9 @@ router.get('/bookings', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  POST /cart/clear — Clear All Items from Cart
 // ══════════════════════════════════════════════════════
-router.post('/cart/clear', async (req, res) => {
+router.post('/cart/clear', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
 
     await TalentCart.deleteMany({ company: cId });
@@ -520,7 +521,7 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Talent not found' });
     }
 
-    const companyId = getCompanyId(req);
+    const companyId = getOptionalUserId(req);
 
     // Check Boost
     const activeBoost = await ProfileBoost.findOne({

@@ -1,29 +1,18 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import jwt from 'jsonwebtoken';
 import Company from '../models/Company.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import Booking from '../models/Booking.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
-
-const getCompanyId = (req) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return null;
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-    return decoded?.id || null;
-  } catch (err) {
-    return null;
-  }
-};
 
 // ══════════════════════════════════════════════════════
 //  GET / — Company Wallet Stats & Transaction History
 // ══════════════════════════════════════════════════════
-router.get('/', async (req, res) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
 
     const company = await Company.findById(cId).lean();
@@ -51,13 +40,13 @@ router.get('/', async (req, res) => {
       .filter(t => (t.type === 'Debit' || t.type === 'Withdrawal') && t.status === 'Completed')
       .reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
 
-    const walletBalance = company.walletBalance !== undefined ? company.walletBalance : 250000;
+    const walletBalance = company.walletBalance !== undefined ? company.walletBalance : 0;
 
     res.json({
       success: true,
       wallet: {
         balance: walletBalance,
-        escrowBalance: activeEscrow || company.escrowBalance || 85000,
+        escrowBalance: activeEscrow || company.escrowBalance || 0,
         totalDeposited,
         totalSpent,
         totalTransactions: transactions.length
@@ -77,9 +66,9 @@ router.get('/', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  POST /deposit — Add Funds to Company Wallet
 // ══════════════════════════════════════════════════════
-router.post('/deposit', async (req, res) => {
+router.post('/deposit', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
     const { amount, paymentMethod, referenceNumber } = req.body;
 
@@ -132,9 +121,9 @@ router.post('/deposit', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  POST /withdraw — Withdraw Funds to Bank Account
 // ══════════════════════════════════════════════════════
-router.post('/withdraw', async (req, res) => {
+router.post('/withdraw', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
     const { amount, accountHolder, bankName, accountNumber, ifsc } = req.body;
 

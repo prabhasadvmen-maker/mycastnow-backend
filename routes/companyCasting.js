@@ -1,29 +1,14 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import jwt from 'jsonwebtoken';
 import Casting from '../models/Casting.js';
 import Creator from '../models/Creator.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Helper to extract company ID from Authorization header
-const getCompanyId = (req) => {
+router.get('/', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return null;
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-    return decoded?.id || null;
-  } catch (err) {
-    return null;
-  }
-};
-
-// ══════════════════════════════════════════════════════
-//  GET / — All Company Casting Notices + Performance Stats
-// ══════════════════════════════════════════════════════
-router.get('/', async (req, res) => {
-  try {
-    const companyId = getCompanyId(req);
+    const companyId = req.user.id;
     if (!companyId) return res.status(401).json({ success: false, message: 'Authentication required' });
     const cId = new mongoose.Types.ObjectId(companyId);
 
@@ -82,12 +67,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════
-//  POST / — Create New Casting Call Notice
-// ══════════════════════════════════════════════════════
-router.post('/', async (req, res) => {
+router.post('/', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req);
+    const companyId = req.user.id;
     if (!companyId) return res.status(401).json({ success: false, message: 'Authentication required' });
     const cId = new mongoose.Types.ObjectId(companyId);
 
@@ -180,7 +162,7 @@ router.get('/:id', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  PUT /:id/applicant/status — Shortlist, Schedule or Hire Applicant
 // ══════════════════════════════════════════════════════
-router.put('/:id/applicant/status', async (req, res) => {
+router.put('/:id/applicant/status', verifyToken, async (req, res) => {
   try {
     const { creatorId, status, notes } = req.body;
 
@@ -218,7 +200,7 @@ router.put('/:id/applicant/status', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  PUT /:id/status — Toggle Status (Open, Closed, Archived)
 // ══════════════════════════════════════════════════════
-router.put('/:id/status', async (req, res) => {
+router.put('/:id/status', verifyToken, async (req, res) => {
   try {
     const { status } = req.body;
     if (!['Open', 'In Review', 'Closed', 'Archived'].includes(status)) {
@@ -250,7 +232,7 @@ router.put('/:id/status', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  DELETE /:id — Delete Casting Call
 // ══════════════════════════════════════════════════════
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', verifyToken, async (req, res) => {
   try {
     const deleted = await Casting.findByIdAndDelete(req.params.id);
     if (!deleted) {

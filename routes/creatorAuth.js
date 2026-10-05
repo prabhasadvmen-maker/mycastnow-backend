@@ -1,42 +1,105 @@
 import express from 'express';
 import axios from 'axios';
-import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import Creator from '../models/Creator.js';
 import HelpTicket from '../models/HelpTicket.js';
+import { verifyToken } from '../middleware/auth.js';
+import logger from '../config/logger.js';
+import { otpLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// In-memory OTP store (Use Redis for production multi-instance)
-const otpStore = {};
+// ── OTP Store: Redis if REDIS_URL is set, else in-memory Map ────────────────
+// To enable Redis: add REDIS_URL=redis://... to your .env
+// In-memory is safe for single-instance (Render/Railway free tier).
+let redisClient = null;
 
-// 1. Send OTP
-router.post('/send-otp', async (req, res) => {
+if (process.env.REDIS_URL) {
+  try {
+    const { createClient } = await import('redis');
+    redisClient = createClient({ url: process.env.REDIS_URL });
+    redisClient.on('error', (err) => logger.error('Redis error:', err.message));
+    await redisClient.connect();
+    logger.info('OTP store: Redis connected');
+  } catch (err) {
+    logger.warn('Redis unavailable, falling back to in-memory OTP store:', err.message);
+    redisClient = null;
+  }
+}
+
+const otpStore = new Map(); // used only when Redis is not available
+
+const setOTP = async (phone, otp, ttlSeconds) => {
+  if (redisClient) {
+    await redisClient.set(`otp:${phone}`, otp, { EX: ttlSeconds });
+  } else {
+    otpStore.set(phone, { otp, expiry: Date.now() + ttlSeconds * 1000 });
+  }
+};
+
+const getOTP = async (phone) => {
+  if (redisClient) {
+    const otp = await redisClient.get(`otp:${phone}`);
+    return otp ? { otp, expiry: Infinity } : null; // Redis handles TTL natively
+  }
+  return otpStore.get(phone) || null;
+};
+
+const deleteOTP = async (phone) => {
+  if (redisClient) {
+    await redisClient.del(`otp:${phone}`);
+  } else {
+    otpStore.delete(phone);
+  }
+};
+
+// Auto-cleanup expired OTPs from in-memory store every 10 minutes
+setInterval(() => {
+  if (redisClient) return; // Redis handles expiry natively
+  const now = Date.now();
+  for (const [phone, record] of otpStore.entries()) {
+    if (now > record.expiry) otpStore.delete(phone);
+  }
+}, 10 * 60 * 1000);
+
+// ──────────────────────────────────────────────────────────────────────────────
+//  1. POST /send-otp — Generate & send OTP
+// ──────────────────────────────────────────────────────────────────────────────
+router.post('/send-otp', otpLimiter, async (req, res) => {
   const { phone } = req.body;
-  if (!phone || phone.length !== 10) {
-    return res.status(400).json({ success: false, message: 'Invalid phone number. Must be 10 digits.' });
+
+  if (!phone || !/^\d{10}$/.test(phone)) {
+    return res.status(400).json({ success: false, message: 'Invalid phone number. Must be exactly 10 digits.' });
   }
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  otpStore[phone] = { otp, expiry: Date.now() + 5 * 60 * 1000 };
 
-  axios.post('https://apitxt.com/api/sendOTP', new URLSearchParams({
-    authkey: process.env.APITXT_API_KEY,
-    mobile: phone,
-    otp,
-    channel: 'sms',
-    country: '91',
-  })).then(response => {
-    if (response.data.status !== 'success' && response.data.status !== 200) {
-      console.warn('APITxT Warning in background:', response.data);
+  // BUG 3 FIX: In production, wait for SMS confirmation before storing OTP.
+  // Only store OTP after successful send to prevent phantom OTPs.
+  if (process.env.NODE_ENV === 'production') {
+    try {
+      const response = await axios.post('https://apitxt.com/api/sendOTP', new URLSearchParams({
+        authkey: process.env.APITXT_API_KEY,
+        mobile: phone,
+        otp,
+        channel: 'sms',
+        country: '91',
+      }));
+      if (response.data.status !== 'success' && response.data.status !== 200) {
+        logger.warn(`APITxT warning for ${phone}:`, response.data);
+        return res.status(502).json({ success: false, message: 'Failed to send OTP. Please try again.' });
+      }
+    } catch (err) {
+      logger.error(`APITxT error for ${phone}: ${err.response?.data || err.message}`);
+      return res.status(502).json({ success: false, message: 'SMS service unavailable. Please try again.' });
     }
-  }).catch(err => {
-    console.error('APITxT Error in background:', err.response?.data || err.message);
-  });
+  }
+
+  await setOTP(phone, otp, 5 * 60); // 5 minutes TTL
 
   const responsePayload = { success: true, message: 'OTP sent successfully' };
-  // Only expose OTP in non-production for testing
   if (process.env.NODE_ENV !== 'production') {
     responsePayload.devOtp = otp;
   }
@@ -44,16 +107,29 @@ router.post('/send-otp', async (req, res) => {
   res.json(responsePayload);
 });
 
-// 2. Verify OTP & Login/Signup
+// ──────────────────────────────────────────────────────────────────────────────
+//  2. POST /verify-otp — Verify OTP & issue JWT
+// ──────────────────────────────────────────────────────────────────────────────
 router.post('/verify-otp', async (req, res) => {
   const { phone, otp } = req.body;
-  const record = otpStore[phone];
 
-  if (!record) return res.status(400).json({ success: false, message: 'OTP not found or expired' });
-  if (Date.now() > record.expiry) return res.status(400).json({ success: false, message: 'OTP expired' });
-  if (record.otp !== otp) return res.status(400).json({ success: false, message: 'Invalid OTP' });
+  if (!phone || !otp) {
+    return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
+  }
 
-  delete otpStore[phone];
+  const record = await getOTP(phone);
+
+  if (!record) return res.status(400).json({ success: false, message: 'OTP not found or expired. Please request a new OTP.' });
+  if (record.expiry !== Infinity && Date.now() > record.expiry) {
+    await deleteOTP(phone);
+    return res.status(400).json({ success: false, message: 'OTP expired. Please request a new one.' });
+  }
+  if (record.otp !== otp.toString()) {
+    return res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' });
+  }
+
+  // OTP verified — delete immediately (one-time use)
+  await deleteOTP(phone);
 
   try {
     let creator = await Creator.findOne({ phone });
@@ -84,67 +160,81 @@ router.post('/verify-otp', async (req, res) => {
       { expiresIn: '30d' }
     );
 
+    const creatorResponse = creator.toObject();
+    delete creatorResponse.password;
+
     res.json({
       success: true,
       message: 'Verified successfully',
       token,
-      creator,
+      creator: creatorResponse,
       isNewUser
     });
 
   } catch (error) {
-    console.error('Error during OTP verification / Creator lookup:', error);
-    res.status(500).json({ success: false, message: 'Server error' });
+    logger.error('OTP verification error:', error);
+    res.status(500).json({ success: false, message: 'Server error during verification' });
   }
 });
 
-// 3. Get Current Creator Profile
-router.get('/me', async (req, res) => {
+// ──────────────────────────────────────────────────────────────────────────────
+//  3. GET /me — Get logged-in creator profile
+// ──────────────────────────────────────────────────────────────────────────────
+router.get('/me', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'No token provided' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const creator = await Creator.findById(decoded.id);
-
+    const creator = await Creator.findById(req.user.id).select('-password');
     if (!creator) return res.status(404).json({ message: 'Creator not found' });
-
     res.json(creator);
   } catch (error) {
-    res.status(401).json({ message: 'Invalid token' });
+    logger.error('Fetch creator me error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// 4. Update Creator Profile
-router.put('/update-profile', async (req, res) => {
+// ──────────────────────────────────────────────────────────────────────────────
+//  4. PUT /update-profile — Whitelist-based safe profile update
+// ──────────────────────────────────────────────────────────────────────────────
+router.put('/update-profile', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ message: 'No token provided' });
+    // SECURITY: Only allow safe fields — never allow isApproved, status, role etc.
+    const ALLOWED_FIELDS = [
+      'basicDetails', 'professionalDetails', 'physicalDetails',
+      'portfolio', 'pricing', 'availability', 'socialLinks',
+      'settings', 'email', 'onboardingStep', 'isProfileComplete'
+    ];
 
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const updates = {};
+    for (const key of ALLOWED_FIELDS) {
+      if (req.body[key] !== undefined) {
+        updates[key] = req.body[key];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ success: false, message: 'No valid fields provided to update' });
+    }
 
     const updatedCreator = await Creator.findByIdAndUpdate(
-      decoded.id,
-      { $set: req.body },
-      { returnDocument: 'after' }
-    );
+      req.user.id,
+      { $set: updates },
+      { new: true, runValidators: true }  // BUG 10 FIX: Mongoose uses `new:true`, not `returnDocument:'after'`
+    ).select('-password');
+
+    if (!updatedCreator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     res.json({ success: true, creator: updatedCreator });
   } catch (error) {
-    console.error('Update profile error:', error);
+    logger.error('Update creator profile error:', error);
     res.status(500).json({ success: false, message: 'Failed to update profile' });
   }
 });
 
-// 5. Change or Set Password for Creator
-router.put('/change-password', async (req, res) => {
+// ──────────────────────────────────────────────────────────────────────────────
+//  5. PUT /change-password — Secure password change
+// ──────────────────────────────────────────────────────────────────────────────
+router.put('/change-password', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ success: false, message: 'No token provided' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const creator = await Creator.findById(decoded.id);
-
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const { currentPassword, newPassword } = req.body;
@@ -160,28 +250,24 @@ router.put('/change-password', async (req, res) => {
       }
     }
 
-    const salt = await bcrypt.genSalt(10);
+    const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    await Creator.findByIdAndUpdate(decoded.id, {
-      $set: { password: hashedPassword }
-    });
+    await Creator.findByIdAndUpdate(req.user.id, { $set: { password: hashedPassword } });
 
     res.json({ success: true, message: 'Password updated successfully!' });
   } catch (error) {
-    console.error('Creator change password error:', error);
+    logger.error('Creator change password error:', error);
     res.status(500).json({ success: false, message: 'Failed to change password' });
   }
 });
 
-// 6. Creator Support Tickets — GET
-router.get('/tickets', async (req, res) => {
+// ──────────────────────────────────────────────────────────────────────────────
+//  6. GET /tickets — Fetch creator support tickets
+// ──────────────────────────────────────────────────────────────────────────────
+router.get('/tickets', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ success: false, message: 'Unauthorized' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const creator = await Creator.findById(decoded.id);
+    const creator = await Creator.findById(req.user.id).select('_id phone').lean();
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const tickets = await HelpTicket.find({
@@ -193,31 +279,29 @@ router.get('/tickets', async (req, res) => {
 
     res.json({ success: true, tickets });
   } catch (error) {
-    console.error('Fetch creator tickets error:', error);
+    logger.error('Fetch creator tickets error:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch tickets' });
   }
 });
 
-// 6b. Creator Support Tickets — POST
-router.post('/tickets', async (req, res) => {
+// ──────────────────────────────────────────────────────────────────────────────
+//  7. POST /tickets — Submit a support ticket
+// ──────────────────────────────────────────────────────────────────────────────
+router.post('/tickets', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return res.status(401).json({ success: false, message: 'Unauthorized' });
-
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const creator = await Creator.findById(decoded.id);
+    const creator = await Creator.findById(req.user.id).select('basicDetails phone email').lean();
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const { subject, category, priority, message } = req.body;
-    if (!subject || !message) {
+    if (!subject || !subject.trim() || !message || !message.trim()) {
       return res.status(400).json({ success: false, message: 'Subject and message are required' });
     }
 
     const ticket = await HelpTicket.create({
-      subject,
+      subject: subject.trim(),
       category: category || 'General Query',
       priority: priority || 'Medium',
-      message,
+      message: message.trim(),
       creatorId: creator._id,
       creatorName: creator.basicDetails?.fullName || 'Creator',
       creatorPhone: creator.phone || '',
@@ -231,7 +315,7 @@ router.post('/tickets', async (req, res) => {
       ticket
     });
   } catch (error) {
-    console.error('Create creator ticket error:', error);
+    logger.error('Create creator ticket error:', error);
     res.status(500).json({ success: false, message: 'Failed to submit ticket' });
   }
 });

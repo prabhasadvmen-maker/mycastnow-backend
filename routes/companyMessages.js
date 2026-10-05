@@ -1,29 +1,15 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import jwt from 'jsonwebtoken';
 import Message from '../models/Message.js';
 import Creator from '../models/Creator.js';
 import Company from '../models/Company.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
 
-const getCompanyId = (req) => {
+router.get('/conversations', verifyToken, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (!token) return null;
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-    return decoded?.id || null;
-  } catch (err) {
-    return null;
-  }
-};
-
-// ══════════════════════════════════════════════════════
-//  GET /conversations — All Active Conversations for Company
-// ══════════════════════════════════════════════════════
-router.get('/conversations', async (req, res) => {
-  try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
 
     // Get distinct creators this company has exchanged messages with
@@ -75,12 +61,9 @@ router.get('/conversations', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════
-//  GET /thread/:creatorId — Fetch Chat Thread with Creator
-// ══════════════════════════════════════════════════════
-router.get('/thread/:creatorId', async (req, res) => {
+router.get('/thread/:creatorId', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const cId = new mongoose.Types.ObjectId(companyId);
     const crId = new mongoose.Types.ObjectId(req.params.creatorId);
 
@@ -120,12 +103,9 @@ router.get('/thread/:creatorId', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════
-//  POST /send — Send Message from Company to Creator
-// ══════════════════════════════════════════════════════
-router.post('/send', async (req, res) => {
+router.post('/send', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const { creatorId, text, projectReference, attachment } = req.body;
 
     if (!creatorId || !text || !text.trim()) {
@@ -158,12 +138,9 @@ router.post('/send', async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════
-//  POST /creator-reply — Simulate or Post Creator Reply
-// ══════════════════════════════════════════════════════
-router.post('/creator-reply', async (req, res) => {
+router.post('/creator-reply', verifyToken, async (req, res) => {
   try {
-    const companyId = getCompanyId(req) || '6ab8136cb407882f7d42a180';
+    const companyId = req.user.id;
     const { creatorId, text, projectReference } = req.body;
 
     if (!creatorId || !text) {

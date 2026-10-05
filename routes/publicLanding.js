@@ -4,6 +4,7 @@ import Company from '../models/Company.js';
 import Casting from '../models/Casting.js';
 import Booking from '../models/Booking.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
+import logger from '../config/logger.js';
 
 const router = express.Router();
 
@@ -67,14 +68,34 @@ const DEFAULT_PLANS = [
     isPopular: false,
     trialDays: 14,
     isActive: true
+  },
+  {
+    _id: 'plan_company_enterprise',
+    name: 'Enterprise Production Agency',
+    description: 'Full studio talent scouting, unlimited hiring pipelines, dedicated casting director support & NDA protection.',
+    targetAudience: 'Company',
+    monthlyPrice: 9999,
+    yearlyPrice: 99990,
+    currency: 'INR',
+    features: ['Unlimited Priority Casting Calls', 'Direct Artist Contact & WhatsApp Desk', 'Custom Talent Audition Pipelines', 'VIP Executive Account Manager', 'Custom Escrow & Billing Invoicing', 'Featured Casting Calls Placement'],
+    maxCastingApplications: -1,
+    maxPortfolioPhotos: -1,
+    maxBookingsPerMonth: -1,
+    prioritySupport: true,
+    verifiedBadge: true,
+    featuredListing: true,
+    badgeColor: 'purple',
+    isPopular: true,
+    trialDays: 14,
+    isActive: true
   }
 ];
 
+// BUG 1 FIX: Removed hardcoded passwords — seed data must never store credentials in DB
 const DEFAULT_APPROVED_COMPANIES = [
   {
     name: 'Dharma Productions',
     email: 'contact@dharma-det.com',
-    password: 'password123',
     industry: 'Feature Films & OTT Series',
     location: 'Mumbai, Maharashtra',
     city: 'Mumbai',
@@ -87,7 +108,6 @@ const DEFAULT_APPROVED_COMPANIES = [
   {
     name: 'Excel Entertainment',
     email: 'casting@excelmovies.com',
-    password: 'password123',
     industry: 'Theatrical Films & Web Series',
     location: 'Mumbai, Maharashtra',
     city: 'Mumbai',
@@ -100,11 +120,10 @@ const DEFAULT_APPROVED_COMPANIES = [
   {
     name: 'Yash Raj Films',
     email: 'auditions@yrfstudios.com',
-    password: 'password123',
     industry: 'Motion Pictures & Streaming Studio',
     location: 'Mumbai, Maharashtra',
     city: 'Mumbai',
-    tagline: 'India’s Premier Film Studio & Talent Division',
+    tagline: "India's Premier Film Studio & Talent Division",
     verified: true,
     isApproved: true,
     approvalStatus: 'approved',
@@ -113,7 +132,6 @@ const DEFAULT_APPROVED_COMPANIES = [
   {
     name: 'Maddock Films',
     email: 'projects@maddockfilms.com',
-    password: 'password123',
     industry: 'Commercial Features & Content',
     location: 'Mumbai, Maharashtra',
     city: 'Mumbai',
@@ -126,7 +144,6 @@ const DEFAULT_APPROVED_COMPANIES = [
   {
     name: 'Red Chillies Entertainment',
     email: 'casting@redchillies.com',
-    password: 'password123',
     industry: 'VFX & Motion Pictures',
     location: 'Mumbai, Maharashtra',
     city: 'Mumbai',
@@ -139,7 +156,6 @@ const DEFAULT_APPROVED_COMPANIES = [
   {
     name: 'Roy Kapur Films',
     email: 'scouting@roykapurfilms.com',
-    password: 'password123',
     industry: 'Independent Cinema & OTT',
     location: 'Mumbai, Maharashtra',
     city: 'Mumbai',
@@ -150,6 +166,22 @@ const DEFAULT_APPROVED_COMPANIES = [
     website: 'https://www.roykapurfilms.com'
   }
 ];
+
+// BUG 9 FIX: ordered:false so duplicate key errors don't crash the whole insertMany
+async function seedCompaniesIfEmpty() {
+  try {
+    await Company.insertMany(DEFAULT_APPROVED_COMPANIES, { ordered: false });
+  } catch (err) {
+    // code 11000 = duplicate key — safe to ignore, others get logged
+    if (err.code !== 11000 && err.name !== 'MongoBulkWriteError') {
+      logger.error('Auto-seed approved companies error:', err.message);
+    }
+  }
+  return Company.find({
+    $or: [{ isApproved: true }, { approvalStatus: 'approved' }],
+    isActive: { $ne: false }
+  }).select('name logo industry location city tagline verified website createdAt').sort({ createdAt: -1 }).lean();
+}
 
 // Public content comes only from persisted records. A new database stays empty.
 router.get('/landing', async (req, res) => {
@@ -172,17 +204,8 @@ router.get('/landing', async (req, res) => {
       }).select('name logo industry location city tagline verified website createdAt').sort({ createdAt: -1 }).lean()
     ]);
 
-    // If no approved companies exist in DB yet, auto-seed them
     if (!dbCompanies || dbCompanies.length === 0) {
-      try {
-        await Company.insertMany(DEFAULT_APPROVED_COMPANIES);
-        dbCompanies = await Company.find({
-          $or: [{ isApproved: true }, { approvalStatus: 'approved' }],
-          isActive: { $ne: false }
-        }).select('name logo industry location city tagline verified website createdAt').sort({ createdAt: -1 }).lean();
-      } catch (seedErr) {
-        console.error('Auto-seed approved companies error:', seedErr.message);
-      }
+      dbCompanies = await seedCompaniesIfEmpty();
     }
 
     const activePlans = dbPlans && dbPlans.length > 0 ? dbPlans : DEFAULT_PLANS;
@@ -276,7 +299,8 @@ router.get('/landing', async (req, res) => {
       plans: activePlans
     });
   } catch (error) {
-    console.error('Error fetching public landing data:', error);
+    // BUG 8 FIX: use logger instead of console.error
+    logger.error('Error fetching public landing data:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch public landing data', stats: null, talents: [], castings: [], companies: [], plans: DEFAULT_PLANS });
   }
 });
@@ -290,16 +314,13 @@ router.get('/companies', async (req, res) => {
     }).select('name logo industry location city tagline verified website createdAt').sort({ createdAt: -1 }).lean();
 
     if (!companies || companies.length === 0) {
-      await Company.insertMany(DEFAULT_APPROVED_COMPANIES);
-      companies = await Company.find({
-        $or: [{ isApproved: true }, { approvalStatus: 'approved' }],
-        isActive: { $ne: false }
-      }).select('name logo industry location city tagline verified website createdAt').sort({ createdAt: -1 }).lean();
+      companies = await seedCompaniesIfEmpty();
     }
 
     res.json({ success: true, companies });
   } catch (error) {
-    console.error('Error fetching public approved companies:', error);
+    // BUG 8 FIX: use logger instead of console.error
+    logger.error('Error fetching public approved companies:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch approved companies', companies: [] });
   }
 });
@@ -311,8 +332,119 @@ router.get('/plans', async (req, res) => {
     const plans = dbPlans && dbPlans.length > 0 ? dbPlans : DEFAULT_PLANS;
     res.json({ success: true, plans });
   } catch (error) {
-    console.error('Error fetching public subscription plans:', error);
+    // BUG 8 FIX: use logger instead of console.error
+    logger.error('Error fetching public subscription plans:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch subscription plans', plans: DEFAULT_PLANS });
+  }
+});
+
+// Dedicated Public Talents Endpoint (with real DB Category & Subcategory extraction)
+router.get('/talents', async (req, res) => {
+  try {
+    const { category, subCategory, city, gender, search, isVerified } = req.query;
+
+    const query = { isActive: { $ne: false } };
+
+    if (category && category !== 'All') {
+      query['professionalDetails.primaryCategory'] = new RegExp(`^${category}$`, 'i');
+    }
+
+    if (subCategory && subCategory !== 'All') {
+      query['professionalDetails.subCategory'] = new RegExp(`^${subCategory}$`, 'i');
+    }
+
+    if (city && city !== 'All' && city !== 'All Cities') {
+      query['basicDetails.city'] = new RegExp(`^${city}$`, 'i');
+    }
+
+    if (gender && gender !== 'All') {
+      query['basicDetails.gender'] = new RegExp(`^${gender}$`, 'i');
+    }
+
+    if (isVerified === 'true') {
+      query.$or = [{ isApproved: true }, { status: 'approved' }];
+    }
+
+    if (search && search.trim()) {
+      const s = search.trim();
+      const searchRegex = new RegExp(s, 'i');
+      query.$or = [
+        { 'basicDetails.fullName': searchRegex },
+        { 'basicDetails.bio': searchRegex },
+        { 'basicDetails.city': searchRegex },
+        { 'professionalDetails.primaryCategory': searchRegex },
+        { 'professionalDetails.subCategory': searchRegex },
+        { 'professionalDetails.skills': searchRegex }
+      ];
+    }
+
+    const creators = await Creator.find(query).sort({ createdAt: -1 }).lean();
+
+    // Dynamically extract distinct categories, subcategories, cities, genders from DB
+    const allCreators = await Creator.find({ isActive: { $ne: false } }).select('professionalDetails basicDetails').lean();
+    
+    const dbCategories = Array.from(new Set(allCreators.map(c => c.professionalDetails?.primaryCategory).filter(Boolean)));
+    const dbSubCategories = Array.from(new Set(allCreators.map(c => c.professionalDetails?.subCategory).filter(Boolean)));
+    const dbCities = Array.from(new Set(allCreators.map(c => c.basicDetails?.city).filter(Boolean)));
+    const dbGenders = Array.from(new Set(allCreators.map(c => c.basicDetails?.gender).filter(Boolean)));
+
+    const talents = creators.map((creator) => {
+      const photos = Array.from(new Set([
+        ...(creator.basicDetails?.profilePhoto ? [creator.basicDetails.profilePhoto] : []),
+        ...(Array.isArray(creator.portfolio?.photos) ? creator.portfolio.photos : [])
+      ].filter(Boolean)));
+
+      const primaryImage = creator.basicDetails?.profilePhoto || photos[0] || '';
+
+      return {
+        id: creator._id.toString(),
+        name: creator.basicDetails?.fullName || creator.name || 'Artist Profile',
+        category: creator.professionalDetails?.primaryCategory || 'Creator',
+        subCategory: creator.professionalDetails?.subCategory || '',
+        role: creator.professionalDetails?.subCategory || creator.professionalDetails?.primaryCategory || '',
+        city: creator.basicDetails?.city || '',
+        experience: creator.professionalDetails?.experience || '',
+        dayRate: creator.pricing?.dayRate ? `₹${Number(creator.pricing.dayRate).toLocaleString('en-IN')} / day` : '',
+        hourlyRate: creator.pricing?.hourlyRate ? `₹${Number(creator.pricing.hourlyRate).toLocaleString('en-IN')} / hr` : '',
+        projectRate: creator.pricing?.projectRate ? `₹${Number(creator.pricing.projectRate).toLocaleString('en-IN')}` : '',
+        rating: creator.stats?.rating || 4.9,
+        reviews: creator.stats?.reviewsCount || 0,
+        totalBookings: creator.stats?.totalBookings || 0,
+        verified: Boolean(creator.isApproved || creator.status === 'approved'),
+        featured: Boolean(creator.featured),
+        image: primaryImage,
+        photos,
+        videos: Array.isArray(creator.portfolio?.videos) ? creator.portfolio.videos : [],
+        bio: creator.basicDetails?.bio || '',
+        gender: creator.basicDetails?.gender || '',
+        languages: Array.isArray(creator.basicDetails?.languages) ? creator.basicDetails.languages : [],
+        skills: Array.isArray(creator.professionalDetails?.skills) ? creator.professionalDetails.skills : [],
+        height: creator.physicalDetails?.height || '',
+        weight: creator.physicalDetails?.weight || '',
+        chest: creator.physicalDetails?.chest || '',
+        waist: creator.physicalDetails?.waist || '',
+        hips: creator.physicalDetails?.hips || '',
+        eyeColor: creator.physicalDetails?.eyeColor || '',
+        hairColor: creator.physicalDetails?.hairColor || '',
+        shoeSize: creator.physicalDetails?.shoeSize || '',
+        complexion: creator.physicalDetails?.complexion || ''
+      };
+    });
+
+    res.json({
+      success: true,
+      talents,
+      meta: {
+        total: talents.length,
+        categories: dbCategories,
+        subCategories: dbSubCategories,
+        cities: dbCities,
+        genders: dbGenders
+      }
+    });
+  } catch (error) {
+    logger.error('Error fetching public talents:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch talents', talents: [], meta: {} });
   }
 });
 

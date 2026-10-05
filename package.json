@@ -19,10 +19,16 @@
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^18.0.4",
-    "express": "^5.2.1",
+    "express": "^4.18.2",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^8.3.0",
+    "hpp": "^0.2.3",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.10.2",
+    "morgan": "^1.12.1",
     "multer": "^2.4.0",
-    "multer-s3": "^3.0.1"
+    "multer-s3": "^3.0.1",
+    "winston": "^3.19.0"
   }
 }

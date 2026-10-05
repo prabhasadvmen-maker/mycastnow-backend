@@ -2,10 +2,10 @@ import express from 'express';
 import multer from 'multer';
 import multerS3 from 'multer-s3';
 import { S3Client } from '@aws-sdk/client-s3';
+import path from 'path';
 import Company from '../models/Company.js';
-import dotenv from 'dotenv';
+import logger from '../config/logger.js';
 
-dotenv.config();
 const router = express.Router();
 
 const bucketName = process.env.R2_BUCKET || process.env.R2_BUCKET_NAME;
@@ -15,6 +15,17 @@ const useR2 = Boolean(
   process.env.R2_ACCESS_KEY_ID &&
   process.env.R2_SECRET_ACCESS_KEY
 );
+
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+const fileFilter = (req, file, cb) => {
+  if (ALLOWED_IMAGE_TYPES.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Only image files (jpg, png, webp, gif) are allowed'));
+  }
+};
+
 let storage;
 
 if (useR2) {
@@ -28,14 +39,12 @@ if (useR2) {
   });
 
   storage = multerS3({
-    s3: s3,
+    s3,
     bucket: bucketName,
-    metadata: function (req, file, cb) {
-      cb(null, {fieldName: file.fieldname});
-    },
-    key: function (req, file, cb) {
-      const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '');
-      cb(null, `companies/${Date.now().toString()}-${sanitizedName}`);
+    metadata: (req, file, cb) => cb(null, { fieldName: file.fieldname }),
+    key: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `companies/${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
     }
   });
 } else {
@@ -44,55 +53,64 @@ if (useR2) {
       fs.mkdirSync('uploads/companies', { recursive: true });
     }
   });
-  
+
   storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-      cb(null, 'uploads/companies');
-    },
-    filename: function (req, file, cb) {
-      const sanitizedName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '');
-      cb(null, `${Date.now().toString()}-${sanitizedName}`);
+    destination: (req, file, cb) => cb(null, 'uploads/companies'),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
     }
   });
 }
 
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  fileFilter,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB for logos
+});
 
 // Create Company
 router.post('/', upload.single('logo'), async (req, res) => {
   try {
     const { name, email, password, industry, website, location } = req.body;
-    
-    const existing = await Company.findOne({ email });
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: 'Name, email and password are required' });
+    }
+
+    const existing = await Company.findOne({ email: email.toLowerCase().trim() });
     if (existing) {
       return res.status(400).json({ message: 'Company with this email already exists' });
     }
 
     let logoUrl = '';
     if (req.file) {
-      if (useR2) {
-        logoUrl = `${process.env.R2_PUBLIC_URL}/${req.file.key}`;
-      } else {
-        logoUrl = `${req.protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
-      }
+      logoUrl = useR2
+        ? `${process.env.R2_PUBLIC_URL}/${req.file.key}`
+        : `${req.protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
     }
 
     const newCompany = new Company({
-      name, email, password, industry, website, location, logo: logoUrl,
-      isApproved: true,           // Admin-created companies are auto-approved
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      password, // Company model's pre-save hook hashes this
+      industry: industry || '',
+      website: website || '',
+      location: location || '',
+      logo: logoUrl,
+      isApproved: true,
       approvalStatus: 'approved',
       verified: true
     });
 
     await newCompany.save();
-    
-    // Don't return password
+
     const companyResponse = newCompany.toObject();
     delete companyResponse.password;
-    
+
     res.status(201).json(companyResponse);
   } catch (err) {
-    console.error('Error creating company:', err);
+    logger.error('Error creating company:', err);
     res.status(500).json({ message: 'Server Error while creating company' });
   }
 });
@@ -103,7 +121,7 @@ router.get('/', async (req, res) => {
     const companies = await Company.find().select('-password').sort({ createdAt: -1 });
     res.json(companies);
   } catch (err) {
-    console.error('Error fetching companies:', err);
+    logger.error('Error fetching companies:', err);
     res.status(500).json({ message: 'Server Error while fetching companies' });
   }
 });
@@ -113,38 +131,35 @@ router.put('/:id', upload.single('logo'), async (req, res) => {
   try {
     const { name, email, password, industry, website, location } = req.body;
     const company = await Company.findById(req.params.id);
-    
+
     if (!company) return res.status(404).json({ message: 'Company not found' });
-    
-    // Check if email changed and if new email already exists
-    if (email && email !== company.email) {
-      const existing = await Company.findOne({ email });
+
+    if (email && email.toLowerCase().trim() !== company.email) {
+      const existing = await Company.findOne({ email: email.toLowerCase().trim() });
       if (existing) return res.status(400).json({ message: 'Email already in use' });
-      company.email = email;
+      company.email = email.toLowerCase().trim();
     }
 
-    if (name) company.name = name;
+    if (name) company.name = name.trim();
     if (password) company.password = password; // pre-save hook will hash it
     if (industry) company.industry = industry;
     if (website) company.website = website;
     if (location) company.location = location;
 
     if (req.file) {
-      if (useR2) {
-        company.logo = `${process.env.R2_PUBLIC_URL}/${req.file.key}`;
-      } else {
-        company.logo = `${req.protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
-      }
+      company.logo = useR2
+        ? `${process.env.R2_PUBLIC_URL}/${req.file.key}`
+        : `${req.protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
     }
 
     await company.save();
-    
+
     const companyResponse = company.toObject();
     delete companyResponse.password;
-    
+
     res.json(companyResponse);
   } catch (err) {
-    console.error('Error updating company:', err);
+    logger.error('Error updating company:', err);
     res.status(500).json({ message: 'Server Error while updating company' });
   }
 });
@@ -154,18 +169,18 @@ router.put('/:id/status', async (req, res) => {
   try {
     const company = await Company.findById(req.params.id);
     if (!company) return res.status(404).json({ message: 'Company not found' });
-    
+
     company.isActive = !company.isActive;
     await company.save();
-    
+
     res.json({ message: 'Status updated successfully', isActive: company.isActive });
   } catch (err) {
-    console.error('Error toggling status:', err);
+    logger.error('Error toggling status:', err);
     res.status(500).json({ message: 'Server Error' });
   }
 });
 
-// Approve Company (Super Admin)
+// Approve Company
 router.put('/:id/approve', async (req, res) => {
   try {
     const company = await Company.findById(req.params.id);
@@ -182,18 +197,14 @@ router.put('/:id/approve', async (req, res) => {
     const companyResponse = company.toObject();
     delete companyResponse.password;
 
-    res.json({ 
-      message: `Company "${company.name}" approved successfully`,
-      success: true,
-      company: companyResponse
-    });
+    res.json({ message: `Company "${company.name}" approved successfully`, success: true, company: companyResponse });
   } catch (err) {
-    console.error('Error approving company:', err);
+    logger.error('Error approving company:', err);
     res.status(500).json({ message: 'Server Error' });
   }
 });
 
-// Reject Company (Super Admin)
+// Reject Company
 router.put('/:id/reject', async (req, res) => {
   try {
     const company = await Company.findById(req.params.id);
@@ -208,13 +219,9 @@ router.put('/:id/reject', async (req, res) => {
     const companyResponse = company.toObject();
     delete companyResponse.password;
 
-    res.json({ 
-      message: `Company "${company.name}" rejected`,
-      success: true,
-      company: companyResponse
-    });
+    res.json({ message: `Company "${company.name}" rejected`, success: true, company: companyResponse });
   } catch (err) {
-    console.error('Error rejecting company:', err);
+    logger.error('Error rejecting company:', err);
     res.status(500).json({ message: 'Server Error' });
   }
 });
@@ -224,10 +231,10 @@ router.delete('/:id', async (req, res) => {
   try {
     const company = await Company.findByIdAndDelete(req.params.id);
     if (!company) return res.status(404).json({ message: 'Company not found' });
-    
+
     res.json({ message: 'Company deleted successfully' });
   } catch (err) {
-    console.error('Error deleting company:', err);
+    logger.error('Error deleting company:', err);
     res.status(500).json({ message: 'Server Error' });
   }
 });

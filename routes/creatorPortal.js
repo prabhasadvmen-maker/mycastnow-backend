@@ -1,6 +1,5 @@
 import express from 'express';
 import mongoose from 'mongoose';
-import jwt from 'jsonwebtoken';
 import Creator from '../models/Creator.js';
 import Casting from '../models/Casting.js';
 import Booking from '../models/Booking.js';
@@ -9,32 +8,16 @@ import Company from '../models/Company.js';
 import WalletTransaction from '../models/WalletTransaction.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import UserSubscription from '../models/UserSubscription.js';
+import { verifyToken } from '../middleware/auth.js';
 
 const router = express.Router();
-
-// Resolve the authenticated creator only. Never substitute another user's profile.
-const getCreator = async (req) => {
-  try {
-    const token = req.headers.authorization?.split(' ')[1];
-    if (token) {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret_for_dev_only');
-      if (decoded?.id) {
-        const creator = await Creator.findById(decoded.id);
-        if (creator) return creator;
-      }
-    }
-  } catch (err) {
-    return null;
-  }
-  return null;
-};
 
 // ══════════════════════════════════════════════════════
 //  1. GET /overview — Creator Overview KPIs & Recent Activity
 // ══════════════════════════════════════════════════════
-router.get('/overview', async (req, res) => {
+router.get('/overview', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) {
       return res.status(404).json({ success: false, message: 'Creator profile not found' });
     }
@@ -130,9 +113,9 @@ router.get('/overview', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  2. GET /portfolio — Creator Portfolio Details
 // ══════════════════════════════════════════════════════
-router.get('/portfolio', async (req, res) => {
+router.get('/portfolio', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     res.json({
@@ -156,9 +139,9 @@ router.get('/portfolio', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  3. PUT /portfolio — Update Entire or Partial Portfolio
 // ══════════════════════════════════════════════════════
-router.put('/portfolio', async (req, res) => {
+router.put('/portfolio', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const { basicDetails, professionalDetails, physicalDetails, portfolio, pricing } = req.body;
@@ -202,12 +185,12 @@ router.put('/portfolio', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  4. POST /portfolio/photo — Add Single Photo
 // ══════════════════════════════════════════════════════
-router.post('/portfolio/photo', async (req, res) => {
+router.post('/portfolio/photo', verifyToken, async (req, res) => {
   try {
     const { photoUrl } = req.body;
     if (!photoUrl) return res.status(400).json({ success: false, message: 'Photo URL is required' });
 
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     if (!creator.portfolio) creator.portfolio = { photos: [], videos: [], campaigns: [] };
@@ -226,10 +209,10 @@ router.post('/portfolio/photo', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  5. DELETE /portfolio/photo — Delete Photo
 // ══════════════════════════════════════════════════════
-router.delete('/portfolio/photo', async (req, res) => {
+router.delete('/portfolio/photo', verifyToken, async (req, res) => {
   try {
     const { photoUrl, index } = req.body;
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     if (!creator.portfolio?.photos) {
@@ -253,14 +236,14 @@ router.delete('/portfolio/photo', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  6. POST /portfolio/campaign — Add Brand Campaign
 // ══════════════════════════════════════════════════════
-router.post('/portfolio/campaign', async (req, res) => {
+router.post('/portfolio/campaign', verifyToken, async (req, res) => {
   try {
     const { title, brand, role, supportingDocs } = req.body;
     if (!title || !brand) {
       return res.status(400).json({ success: false, message: 'Title and Brand are required' });
     }
 
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     if (!creator.portfolio) creator.portfolio = { photos: [], videos: [], campaigns: [] };
@@ -269,6 +252,7 @@ router.post('/portfolio/campaign', async (req, res) => {
     creator.portfolio.campaigns.push({
       title,
       brand,
+      role: role || '',
       supportingDocs: supportingDocs || []
     });
 
@@ -283,10 +267,10 @@ router.post('/portfolio/campaign', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  7. DELETE /portfolio/campaign/:index — Remove Campaign
 // ══════════════════════════════════════════════════════
-router.delete('/portfolio/campaign/:index', async (req, res) => {
+router.delete('/portfolio/campaign/:index', verifyToken, async (req, res) => {
   try {
     const index = parseInt(req.params.index, 10);
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     if (creator.portfolio?.campaigns && index >= 0 && index < creator.portfolio.campaigns.length) {
@@ -304,10 +288,9 @@ router.delete('/portfolio/campaign/:index', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  8. GET /castings — Browse All Open Casting Calls
 // ══════════════════════════════════════════════════════
-router.get('/castings', async (req, res) => {
+router.get('/castings', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    const creatorId = creator?._id?.toString();
+    const creatorId = req.user.id;
 
     const { projectType, location, gender, search } = req.query;
 
@@ -337,7 +320,7 @@ router.get('/castings', async (req, res) => {
 
     // Map castings with user-specific application status
     const formattedCastings = castings.map(c => {
-      const myApp = creatorId ? c.applicants?.find(a => a.creator?.toString() === creatorId) : null;
+      const myApp = c.applicants?.find(a => a.creator?.toString() === creatorId);
       return {
         ...c,
         hasApplied: !!myApp,
@@ -361,10 +344,10 @@ router.get('/castings', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  9. POST /castings/:id/apply — Apply to a Casting Call
 // ══════════════════════════════════════════════════════
-router.post('/castings/:id/apply', async (req, res) => {
+router.post('/castings/:id/apply', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(401).json({ success: false, message: 'Creator not authenticated' });
+    const creator = await Creator.findById(req.user.id);
+    if (!creator) return res.status(404).json({ success: false, message: 'Creator profile not found' });
 
     const { id } = req.params;
     const { notes } = req.body;
@@ -409,15 +392,12 @@ router.post('/castings/:id/apply', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  10. GET /applications — Creator's Applied Castings
 // ══════════════════════════════════════════════════════
-router.get('/applications', async (req, res) => {
+router.get('/applications', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
-
-    const creatorId = creator._id.toString();
+    const creatorId = req.user.id;
 
     const castings = await Casting.find({
-      'applicants.creator': creator._id
+      'applicants.creator': new mongoose.Types.ObjectId(creatorId)
     })
       .populate('company', 'name logo city website phone email')
       .sort({ updatedAt: -1 })
@@ -460,16 +440,15 @@ router.get('/applications', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  11. DELETE /applications/:castingId — Withdraw Application
 // ══════════════════════════════════════════════════════
-router.delete('/applications/:castingId', async (req, res) => {
+router.delete('/applications/:castingId', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
+    const creatorId = req.user.id;
 
     const { castingId } = req.params;
     const casting = await Casting.findById(castingId);
     if (!casting) return res.status(404).json({ success: false, message: 'Casting call not found' });
 
-    casting.applicants = casting.applicants.filter(a => a.creator?.toString() !== creator._id.toString());
+    casting.applicants = casting.applicants.filter(a => a.creator?.toString() !== creatorId);
     casting.applicantsCount = casting.applicants.length;
     await casting.save();
 
@@ -486,12 +465,11 @@ router.delete('/applications/:castingId', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  12. GET /bookings — Creator's Confirmed & Pending Bookings
 // ══════════════════════════════════════════════════════
-router.get('/bookings', async (req, res) => {
+router.get('/bookings', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
+    const creatorId = req.user.id;
 
-    const bookings = await Booking.find({ creator: creator._id })
+    const bookings = await Booking.find({ creator: new mongoose.Types.ObjectId(creatorId) })
       .populate('company', 'name logo city website phone email')
       .sort({ createdAt: -1 })
       .lean();
@@ -510,15 +488,13 @@ router.get('/bookings', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  13. PUT /bookings/:id/status — Accept / Reject / Complete
 // ══════════════════════════════════════════════════════
-router.put('/bookings/:id/status', async (req, res) => {
+router.put('/bookings/:id/status', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
-
+    const creatorId = req.user.id;
     const { id } = req.params;
     const { status } = req.body; // 'Confirmed' | 'Cancelled' | 'Completed'
 
-    const booking = await Booking.findOne({ _id: id, creator: creator._id });
+    const booking = await Booking.findOne({ _id: id, creator: new mongoose.Types.ObjectId(creatorId) });
     if (!booking) return res.status(404).json({ success: false, message: 'Booking not found' });
 
     booking.status = status;
@@ -541,12 +517,11 @@ router.put('/bookings/:id/status', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  14. GET /messages/conversations — Live Chat Conversations
 // ══════════════════════════════════════════════════════
-router.get('/messages/conversations', async (req, res) => {
+router.get('/messages/conversations', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
+    const creatorId = req.user.id;
 
-    const messages = await Message.find({ creator: creator._id })
+    const messages = await Message.find({ creator: new mongoose.Types.ObjectId(creatorId) })
       .populate('company', 'name logo city email phone')
       .sort({ createdAt: -1 })
       .lean();
@@ -594,16 +569,14 @@ router.get('/messages/conversations', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  15. GET /messages/thread/:companyId — Messages with Company
 // ══════════════════════════════════════════════════════
-router.get('/messages/thread/:companyId', async (req, res) => {
+router.get('/messages/thread/:companyId', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
-
+    const creatorId = req.user.id;
     const { companyId } = req.params;
     const cId = new mongoose.Types.ObjectId(companyId);
 
     const messages = await Message.find({
-      creator: creator._id,
+      creator: new mongoose.Types.ObjectId(creatorId),
       company: cId
     })
       .sort({ createdAt: 1 })
@@ -611,7 +584,7 @@ router.get('/messages/thread/:companyId', async (req, res) => {
 
     // Mark messages from company as read
     await Message.updateMany(
-      { creator: creator._id, company: cId, senderType: 'Company', read: false },
+      { creator: new mongoose.Types.ObjectId(creatorId), company: cId, senderType: 'Company', read: false },
       { $set: { read: true } }
     );
 
@@ -631,11 +604,9 @@ router.get('/messages/thread/:companyId', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  16. POST /messages/send — Send Message to Company
 // ══════════════════════════════════════════════════════
-router.post('/messages/send', async (req, res) => {
+router.post('/messages/send', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
-    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
-
+    const creatorId = req.user.id;
     const { companyId, text, projectReference } = req.body;
     if (!companyId || !text?.trim()) {
       return res.status(400).json({ success: false, message: 'companyId and text are required' });
@@ -643,7 +614,7 @@ router.post('/messages/send', async (req, res) => {
 
     const msg = new Message({
       company: new mongoose.Types.ObjectId(companyId),
-      creator: creator._id,
+      creator: new mongoose.Types.ObjectId(creatorId),
       senderType: 'Creator',
       text: text.trim(),
       projectReference: projectReference || '',
@@ -666,79 +637,50 @@ router.post('/messages/send', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  17. GET /wallet — Creator Wallet Balance & Ledger
 // ══════════════════════════════════════════════════════
-router.get('/wallet', async (req, res) => {
+router.get('/wallet', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const userId = creator._id.toString();
 
-    let txs = await WalletTransaction.find({
+    const txs = await WalletTransaction.find({
       userId,
       userType: 'Creator'
     }).sort({ createdAt: -1 }).lean();
 
-    // If no transactions yet, initialize realistic creator ledger
-    if (txs.length === 0) {
-      await WalletTransaction.create({
-        userId,
-        userType: 'Creator',
-        userName: creator.basicDetails?.fullName || '',
-        userContact: creator.phone,
-        type: 'Credit',
-        amount: 50000,
-        currency: 'INR',
-        description: 'Payment released for Lakme Fashion Week Ramp Walk Show',
-        referenceType: 'Booking',
-        status: 'Completed',
-        balanceAfter: 50000
-      });
-
-      await WalletTransaction.create({
-        userId,
-        userType: 'Creator',
-        userName: creator.basicDetails?.fullName || '',
-        userContact: creator.phone,
-        type: 'Withdrawal',
-        amount: 20000,
-        currency: 'INR',
-        description: 'Payout to HDFC Bank A/C ending in 4920',
-        referenceType: 'Withdrawal',
-        status: 'Completed',
-        balanceAfter: 30000,
-        payoutDetails: {
-          payoutMethod: 'Bank Transfer',
-          accountHolder: creator.basicDetails?.fullName || '',
-          bankName: 'HDFC Bank',
-          accountNumber: 'XXXXXX4920',
-          ifsc: 'HDFC0001234',
-          utrNumber: 'CMS' + Math.floor(100000000 + Math.random() * 900000000)
-        }
-      });
-
-      txs = await WalletTransaction.find({
-        userId,
-        userType: 'Creator'
-      }).sort({ createdAt: -1 }).lean();
-    }
-
-    // Compute balances
-    let availableBalance = 30000;
-    let totalWithdrawn = 20000;
-    const escrowBalance = 35000; // Locked for pending booking
+    // Compute balances dynamically from transactions
+    let availableBalance = 0;
+    let totalWithdrawn = 0;
+    let totalEarned = 0;
 
     txs.forEach(t => {
-      if (t.type === 'Withdrawal' && t.status === 'Completed') {
-        // counted
+      if (t.status === 'Completed') {
+        if (t.type === 'Credit') {
+          availableBalance += Number(t.amount) || 0;
+          totalEarned += Number(t.amount) || 0;
+        } else if (t.type === 'Withdrawal' || t.type === 'Debit') {
+          availableBalance -= Number(t.amount) || 0;
+          totalWithdrawn += Number(t.amount) || 0;
+        }
       }
     });
 
+    // Escrow: Confirmed bookings not yet paid
+    const escrowBookings = await Booking.find({
+      creator: creator._id,
+      status: 'Confirmed',
+      paymentStatus: { $in: ['Unpaid', 'Partially Paid'] }
+    }).lean();
+
+    const escrowBalance = escrowBookings.reduce((acc, b) => acc + (Number(b.amount) || 0), 0);
+
     res.json({
       success: true,
-      balance: availableBalance,
+      balance: Math.max(0, availableBalance),
       escrowBalance,
       totalWithdrawn,
-      totalEarned: availableBalance + totalWithdrawn + escrowBalance,
+      totalEarned,
       transactions: txs
     });
   } catch (error) {
@@ -750,9 +692,9 @@ router.get('/wallet', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  18. POST /wallet/withdraw — Request Payout
 // ══════════════════════════════════════════════════════
-router.post('/wallet/withdraw', async (req, res) => {
+router.post('/wallet/withdraw', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const { amount, method, bankName, accountNumber, ifsc, upiId } = req.body;
@@ -772,14 +714,14 @@ router.post('/wallet/withdraw', async (req, res) => {
       currency: 'INR',
       description: `Withdrawal payout request via ${method || 'Bank Transfer'}`,
       referenceType: 'Withdrawal',
-      status: 'Completed',
-      balanceAfter: Math.max(0, 30000 - withdrawAmount),
+      status: 'Pending',
+      balanceAfter: 0,
       payoutDetails: {
         payoutMethod: method || 'Bank Transfer',
         accountHolder: creator.basicDetails?.fullName || '',
         bankName: bankName || 'Primary Bank',
-        accountNumber: accountNumber ? `XXXXXX${accountNumber.slice(-4)}` : 'XXXXXX4920',
-        ifsc: ifsc || 'HDFC0001234',
+        accountNumber: accountNumber ? `XXXXXX${accountNumber.slice(-4)}` : '',
+        ifsc: ifsc || '',
         upiId: upiId || '',
         utrNumber: 'CMS' + Math.floor(100000000 + Math.random() * 900000000)
       }
@@ -789,7 +731,7 @@ router.post('/wallet/withdraw', async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: `Withdrawal of ₹${withdrawAmount.toLocaleString('en-IN')} processed successfully!`,
+      message: `Withdrawal of ₹${withdrawAmount.toLocaleString('en-IN')} request submitted successfully!`,
       transaction: tx
     });
   } catch (error) {
@@ -801,33 +743,48 @@ router.post('/wallet/withdraw', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  19. GET /earnings — Creator Income Analytics
 // ══════════════════════════════════════════════════════
-router.get('/earnings', async (req, res) => {
+router.get('/earnings', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
+
+    const userId = creator._id.toString();
+
+    // Fetch real transactions from DB
+    const txs = await WalletTransaction.find({
+      userId,
+      userType: 'Creator',
+      status: 'Completed',
+      type: 'Credit'
+    }).sort({ createdAt: 1 }).lean();
+
+    const totalGross = txs.reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+    const completedProjectsCount = txs.length;
+
+    // Monthly trend (last 6 months)
+    const now = new Date();
+    const monthlyTrends = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const monthLabel = d.toLocaleString('en-IN', { month: 'short' });
+      const nextMonth = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+      const monthTotal = txs
+        .filter(t => new Date(t.createdAt) >= d && new Date(t.createdAt) < nextMonth)
+        .reduce((acc, t) => acc + (Number(t.amount) || 0), 0);
+      monthlyTrends.push({ month: monthLabel, amount: monthTotal });
+    }
 
     res.json({
       success: true,
       summary: {
-        totalGross: 85000,
-        netReceived: 50000,
-        inEscrow: 35000,
-        avgProjectFee: 42500,
-        completedProjectsCount: 2
+        totalGross,
+        netReceived: totalGross,
+        inEscrow: 0,
+        avgProjectFee: completedProjectsCount > 0 ? Math.round(totalGross / completedProjectsCount) : 0,
+        completedProjectsCount
       },
-      monthlyTrends: [
-        { month: 'Apr', amount: 15000 },
-        { month: 'May', amount: 25000 },
-        { month: 'Jun', amount: 30000 },
-        { month: 'Jul', amount: 45000 },
-        { month: 'Aug', amount: 60000 },
-        { month: 'Sep', amount: 85000 }
-      ],
-      categoryBreakdown: [
-        { category: 'Fashion & Runway Shows', percentage: 55, amount: 46750 },
-        { category: 'Commercial Ad Films', percentage: 35, amount: 29750 },
-        { category: 'Print Catalog Shoots', percentage: 10, amount: 8500 }
-      ]
+      monthlyTrends,
+      categoryBreakdown: []
     });
   } catch (error) {
     console.error('Error fetching earnings analytics:', error);
@@ -838,9 +795,9 @@ router.get('/earnings', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  20. GET /subscription — Current Plan & Upgrades
 // ══════════════════════════════════════════════════════
-router.get('/subscription', async (req, res) => {
+router.get('/subscription', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     // Fetch active database plans strictly for Creator or Both
@@ -904,20 +861,24 @@ router.get('/subscription', async (req, res) => {
 // ══════════════════════════════════════════════════════
 //  21. POST /subscription/upgrade — Upgrade Plan
 // ══════════════════════════════════════════════════════
-router.post('/subscription/upgrade', async (req, res) => {
+router.post('/subscription/upgrade', verifyToken, async (req, res) => {
   try {
-    const creator = await getCreator(req);
+    const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     const { planName, billingCycle } = req.body;
 
+    if (!planName) {
+      return res.status(400).json({ success: false, message: 'planName is required' });
+    }
+
     res.json({
       success: true,
-      message: `Successfully upgraded to ${planName || 'Pro Creator VIP'}!`,
+      message: `Successfully upgraded to ${planName}!`,
       plan: {
-        planName: planName || 'Pro Creator VIP',
+        planName,
         billingCycle: billingCycle || 'Monthly',
-        expiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        expiryDate: new Date(Date.now() + (billingCycle === 'Yearly' ? 365 : 30) * 24 * 60 * 60 * 1000)
       }
     });
   } catch (error) {
@@ -927,4 +888,3 @@ router.post('/subscription/upgrade', async (req, res) => {
 });
 
 export default router;
-
