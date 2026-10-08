@@ -64,6 +64,8 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://mycastnow.com',
   'https://www.mycastnow.com',
+  'https://mycastnow.vercel.app',
+  process.env.FRONTEND_URL,
   process.env.R2_PUBLIC_URL,
 ].filter(Boolean);
 
