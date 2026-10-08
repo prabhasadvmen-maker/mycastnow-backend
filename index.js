@@ -98,8 +98,22 @@ app.use(mongoSanitize());
 // ── HTTP Parameter Pollution Prevention ─────────────────────────────────────
 app.use(hpp());
 
-// ── Static Files ─────────────────────────────────────────────────────────────
-app.use('/uploads', express.static('uploads'));
+// ── Static Files with Caching ────────────────────────────────────────────────
+app.use('/uploads', express.static('uploads', {
+  maxAge: '1d',
+  etag: false
+}));
+
+// ── Cache Control Middleware ─────────────────────────────────────────────────
+app.use((req, res, next) => {
+  if (req.method === 'GET' && req.path.startsWith('/api/public')) {
+    res.set('Cache-Control', 'public, max-age=300');
+  }
+  if (req.path === '/api/health') {
+    res.set('Cache-Control', 'public, max-age=60');
+  }
+  next();
+});
 
 // ── Global API Rate Limiter ──────────────────────────────────────────────────
 app.use('/api', apiLimiter);
@@ -173,6 +187,14 @@ connectDB()
   .then(() => {
     const server = app.listen(PORT, () => {
       logger.info(`✅ Server running on port ${PORT} | ENV: ${process.env.NODE_ENV || 'development'}`);
+
+      // Keep-alive: ping self every 30s to prevent Render free tier sleep
+      if (process.env.NODE_ENV === 'production') {
+        const SELF_URL = process.env.RENDER_EXTERNAL_URL || 'https://mycastnow-backend.onrender.com/api';
+        setInterval(() => {
+          fetch(`${SELF_URL}/health`).catch(() => {});
+        }, 30 * 1000);
+      }
     });
 
     // ── Graceful Shutdown (SIGTERM = Render/Railway deploy, SIGINT = Ctrl+C) ──
