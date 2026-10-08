@@ -87,7 +87,7 @@ router.post('/', upload.single('logo'), async (req, res) => {
     if (req.file) {
       logoUrl = useR2
         ? `${process.env.R2_PUBLIC_URL}/${req.file.key}`
-        : `${req.protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
+        : `${process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`}/uploads/companies/${req.file.filename}`;
     }
 
     const newCompany = new Company({
@@ -149,7 +149,7 @@ router.put('/:id', upload.single('logo'), async (req, res) => {
     if (req.file) {
       company.logo = useR2
         ? `${process.env.R2_PUBLIC_URL}/${req.file.key}`
-        : `${req.protocol}://${req.get('host')}/uploads/companies/${req.file.filename}`;
+        : `${process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`}/uploads/companies/${req.file.filename}`;
     }
 
     await company.save();
