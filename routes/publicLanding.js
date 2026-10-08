@@ -91,7 +91,6 @@ const DEFAULT_PLANS = [
   }
 ];
 
-// BUG 1 FIX: Removed hardcoded passwords — seed data must never store credentials in DB
 const DEFAULT_APPROVED_COMPANIES = [
   {
     name: 'Dharma Productions',
@@ -167,12 +166,10 @@ const DEFAULT_APPROVED_COMPANIES = [
   }
 ];
 
-// BUG 9 FIX: ordered:false so duplicate key errors don't crash the whole insertMany
 async function seedCompaniesIfEmpty() {
   try {
     await Company.insertMany(DEFAULT_APPROVED_COMPANIES, { ordered: false });
   } catch (err) {
-    // code 11000 = duplicate key — safe to ignore, others get logged
     if (err.code !== 11000 && err.name !== 'MongoBulkWriteError') {
       logger.error('Auto-seed approved companies error:', err.message);
     }
@@ -183,11 +180,10 @@ async function seedCompaniesIfEmpty() {
   }).select('name logo industry location city tagline verified website createdAt').sort({ createdAt: -1 }).lean();
 }
 
-// Public content comes only from persisted records. A new database stays empty.
 router.get('/landing', async (req, res) => {
   try {
     let [creators, castings, creatorsCount, companiesCount, castingsCount, completedBookings, dbPlans, dbCompanies] = await Promise.all([
-      Creator.find({ isActive: { $ne: false } }).sort({ createdAt: -1 }).limit(12).lean(),
+      Creator.find({ isActive: { $ne: false }, $or: [{ isApproved: true }, { status: 'approved' }] }).sort({ createdAt: -1 }).limit(12).lean(),
       Casting.find({
         status: { $in: ['Open', 'open', 'Active', 'active'] },
         approvalStatus: { $ne: 'rejected' },
@@ -299,13 +295,11 @@ router.get('/landing', async (req, res) => {
       plans: activePlans
     });
   } catch (error) {
-    // BUG 8 FIX: use logger instead of console.error
     logger.error('Error fetching public landing data:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch public landing data', stats: null, talents: [], castings: [], companies: [], plans: DEFAULT_PLANS });
   }
 });
 
-// Dedicated Public Approved Companies Endpoint
 router.get('/companies', async (req, res) => {
   try {
     let companies = await Company.find({
@@ -319,31 +313,27 @@ router.get('/companies', async (req, res) => {
 
     res.json({ success: true, companies });
   } catch (error) {
-    // BUG 8 FIX: use logger instead of console.error
     logger.error('Error fetching public approved companies:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch approved companies', companies: [] });
   }
 });
 
-// Dedicated Public Plans Endpoint
 router.get('/plans', async (req, res) => {
   try {
     const dbPlans = await SubscriptionPlan.find({ isActive: { $ne: false } }).sort({ sortOrder: 1, monthlyPrice: 1 }).lean();
     const plans = dbPlans && dbPlans.length > 0 ? dbPlans : DEFAULT_PLANS;
     res.json({ success: true, plans });
   } catch (error) {
-    // BUG 8 FIX: use logger instead of console.error
     logger.error('Error fetching public subscription plans:', error);
     res.status(500).json({ success: false, message: 'Failed to fetch subscription plans', plans: DEFAULT_PLANS });
   }
 });
 
-// Dedicated Public Talents Endpoint (with real DB Category & Subcategory extraction)
 router.get('/talents', async (req, res) => {
   try {
     const { category, subCategory, city, gender, search, isVerified } = req.query;
 
-    const query = { isActive: { $ne: false } };
+    const query = { isActive: { $ne: false }, $or: [{ isApproved: true }, { status: 'approved' }] };
 
     if (category && category !== 'All') {
       query['professionalDetails.primaryCategory'] = new RegExp(`^${category}$`, 'i');
@@ -361,10 +351,6 @@ router.get('/talents', async (req, res) => {
       query['basicDetails.gender'] = new RegExp(`^${gender}$`, 'i');
     }
 
-    if (isVerified === 'true') {
-      query.$or = [{ isApproved: true }, { status: 'approved' }];
-    }
-
     if (search && search.trim()) {
       const s = search.trim();
       const searchRegex = new RegExp(s, 'i');
@@ -380,8 +366,7 @@ router.get('/talents', async (req, res) => {
 
     const creators = await Creator.find(query).sort({ createdAt: -1 }).lean();
 
-    // Dynamically extract distinct categories, subcategories, cities, genders from DB
-    const allCreators = await Creator.find({ isActive: { $ne: false } }).select('professionalDetails basicDetails').lean();
+    const allCreators = await Creator.find({ isActive: { $ne: false }, $or: [{ isApproved: true }, { status: 'approved' }] }).select('professionalDetails basicDetails').lean();
     
     const dbCategories = Array.from(new Set(allCreators.map(c => c.professionalDetails?.primaryCategory).filter(Boolean)));
     const dbSubCategories = Array.from(new Set(allCreators.map(c => c.professionalDetails?.subCategory).filter(Boolean)));

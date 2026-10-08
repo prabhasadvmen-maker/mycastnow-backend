@@ -38,6 +38,7 @@ import companyProfileRoutes from './routes/companyProfile.js';
 import creatorPortalRoutes from './routes/creatorPortal.js';
 import adminSettingsRoutes from './routes/adminSettings.js';
 import publicLandingRoutes from './routes/publicLanding.js';
+import paymentsRoutes from './routes/payments.js';
 
 // ── Startup checks ───────────────────────────────────────────────────────────
 if (!process.env.JWT_SECRET) {
@@ -63,7 +64,8 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://mycastnow.com',
   'https://www.mycastnow.com',
-];
+  process.env.R2_PUBLIC_URL,
+].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
@@ -71,7 +73,11 @@ app.use(cors({
     logger.warn(`CORS blocked request from: ${origin}`);
     callback(new Error('Not allowed by CORS'));
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  exposedHeaders: ['Content-Length', 'X-JSON-Response-Size'],
+  maxAge: 86400
 }));
 
 // ── HTTP Request Logger (Morgan → Winston) ───────────────────────────────────
@@ -120,6 +126,9 @@ app.use('/api/company/profile', companyProfileRoutes);
 
 // ── Creator Routes ─────────────────────────────────────────────────────────────
 app.use('/api/creator/portal', creatorPortalRoutes);
+
+// ── Payments Routes ───────────────────────────────────────────────────────────
+app.use('/api/payments', paymentsRoutes);
 
 // ── Public Boost & Review ─────────────────────────────────────────────────────
 app.use('/api/boost', boostApiRoutes);

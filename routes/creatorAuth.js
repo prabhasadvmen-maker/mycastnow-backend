@@ -108,6 +108,47 @@ router.post('/send-otp', otpLimiter, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
+//  1.5 POST /resend-otp — Resend OTP
+// ──────────────────────────────────────────────────────────────────────────────
+router.post('/resend-otp', otpLimiter, async (req, res) => {
+  const { phone } = req.body;
+
+  if (!phone || !/^\d{10}$/.test(phone)) {
+    return res.status(400).json({ success: false, message: 'Invalid phone number. Must be exactly 10 digits.' });
+  }
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+  if (process.env.NODE_ENV === 'production') {
+    try {
+      const response = await axios.post('https://apitxt.com/api/sendOTP', new URLSearchParams({
+        authkey: process.env.APITXT_API_KEY,
+        mobile: phone,
+        otp,
+        channel: 'sms',
+        country: '91',
+      }));
+      if (response.data.status !== 'success' && response.data.status !== 200) {
+        logger.warn(`APITxT warning for ${phone}:`, response.data);
+        return res.status(502).json({ success: false, message: 'Failed to send OTP. Please try again.' });
+      }
+    } catch (err) {
+      logger.error(`APITxT error for ${phone}: ${err.response?.data || err.message}`);
+      return res.status(502).json({ success: false, message: 'SMS service unavailable. Please try again.' });
+    }
+  }
+
+  await setOTP(phone, otp, 5 * 60); // 5 minutes TTL
+
+  const responsePayload = { success: true, message: 'OTP resent successfully' };
+  if (process.env.NODE_ENV !== 'production') {
+    responsePayload.devOtp = otp;
+  }
+
+  res.json(responsePayload);
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
 //  2. POST /verify-otp — Verify OTP & issue JWT
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/verify-otp', async (req, res) => {
@@ -224,6 +265,9 @@ router.put('/update-profile', verifyToken, async (req, res) => {
 
     res.json({ success: true, creator: updatedCreator });
   } catch (error) {
+    if (error.code === 11000 && error.keyPattern && error.keyPattern.email) {
+      return res.status(400).json({ success: false, message: 'This email is already in use by another account.' });
+    }
     logger.error('Update creator profile error:', error);
     res.status(500).json({ success: false, message: 'Failed to update profile' });
   }

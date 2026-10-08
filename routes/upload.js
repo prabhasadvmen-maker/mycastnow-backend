@@ -69,7 +69,52 @@ if (useR2) {
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 100 * 1024 * 1024 } // 100MB for videos
+  limits: { fileSize: 100 * 1024 * 1024 }
+});
+
+router.post('/upload-direct', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    let fileUrl;
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    if (useR2 && req.file.key) {
+      fileUrl = `${protocol}://${req.get('host')}/api/upload/file/${req.file.key}`;
+    } else {
+      fileUrl = `${protocol}://${req.get('host')}/uploads/portfolio/${req.file.filename}`;
+    }
+
+    res.json({ success: true, url: fileUrl, type: req.file.mimetype });
+  } catch (error) {
+    logger.error('Direct upload error:', error);
+    res.status(500).json({ error: 'Failed to upload file' });
+  }
+});
+
+router.post('/portfolio', upload.array('files', 10), (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+
+    const fileUrls = req.files.map(file => {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      if (useR2 && file.key) {
+        return { url: `${protocol}://${req.get('host')}/api/upload/file/${file.key}`, type: file.mimetype };
+      }
+      return {
+        url: `${protocol}://${req.get('host')}/uploads/portfolio/${file.filename}`,
+        type: file.mimetype
+      };
+    });
+
+    res.json({ success: true, files: fileUrls });
+  } catch (error) {
+    logger.error('Upload error:', error);
+    res.status(500).json({ error: 'Failed to upload files' });
+  }
 });
 
 router.post('/presigned-url', async (req, res) => {
@@ -94,7 +139,8 @@ router.post('/presigned-url', async (req, res) => {
 
       const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
       const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-      const publicUrl = `${process.env.R2_PUBLIC_URL}/${key}`;
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const publicUrl = `${protocol}://${req.get('host')}/api/upload/file/${key}`;
 
       res.json({ success: true, uploadUrl, fileUrl: publicUrl, key });
     } else {
@@ -106,39 +152,10 @@ router.post('/presigned-url', async (req, res) => {
   }
 });
 
-router.post('/portfolio', upload.array('files', 10), (req, res) => {
-  try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'No files uploaded' });
-    }
-
-    const fileUrls = req.files.map(file => {
-      // R2: use public CDN URL directly
-      if (useR2 && file.key) {
-        return { url: `${process.env.R2_PUBLIC_URL}/${file.key}`, type: file.mimetype };
-      }
-      // Local fallback
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-      return {
-        url: `${protocol}://${req.get('host')}/uploads/portfolio/${file.filename}`,
-        type: file.mimetype
-      };
-    });
-
-    res.json({ success: true, files: fileUrls });
-  } catch (error) {
-    logger.error('Upload error:', error);
-    res.status(500).json({ error: 'Failed to upload files' });
-  }
-});
-
-// Proxy route to stream files from R2 or serve local
-// Path traversal fix: validate key stays within allowed prefix
 router.get(/^\/file\/(.+)$/, async (req, res) => {
   try {
     const rawKey = req.params[0];
 
-    // Path traversal protection — only allow portfolio/ and companies/ prefixes
     const normalizedKey = path.normalize(rawKey).replace(/\\/g, '/');
     if (
       normalizedKey.includes('..') ||
@@ -156,7 +173,6 @@ router.get(/^\/file\/(.+)$/, async (req, res) => {
     } else {
       const fs = await import('fs');
       const localFilePath = path.join(process.cwd(), 'uploads', normalizedKey);
-      // Ensure resolved path is inside uploads/
       const uploadsRoot = path.join(process.cwd(), 'uploads');
       if (!localFilePath.startsWith(uploadsRoot)) {
         return res.status(400).json({ error: 'Invalid file path' });

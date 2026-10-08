@@ -143,6 +143,12 @@ const creatorSchema = new mongoose.Schema({
     }
   },
 
+  // Payment
+  onboardingFeePaid: { type: Boolean, default: false },
+  onboardingPaymentId: { type: String },
+  onboardingOrderId: { type: String },
+  onboardingPaidAt: { type: Date },
+
   // 8. Stats
   stats: {
     totalBookings: { type: Number, default: 0 },
