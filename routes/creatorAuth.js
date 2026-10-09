@@ -6,7 +6,7 @@ import Creator from '../models/Creator.js';
 import HelpTicket from '../models/HelpTicket.js';
 import { verifyToken } from '../middleware/auth.js';
 import logger from '../config/logger.js';
-import { otpLimiter } from '../middleware/rateLimiter.js';
+import { otpLimiter, authLimiter } from '../middleware/rateLimiter.js';
 
 const router = express.Router();
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -149,9 +149,9 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-//  2. POST /verify-otp — Verify OTP & issue JWT
+//  2. POST /verify-otp — Verify OTP & issue JWT (with rate limiting)
 // ──────────────────────────────────────────────────────────────────────────────
-router.post('/verify-otp', async (req, res) => {
+router.post('/verify-otp', authLimiter, async (req, res) => {
   const { phone, otp } = req.body;
 
   if (!phone || !otp) {

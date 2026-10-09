@@ -6,6 +6,7 @@ import multer from 'multer';
 import path from 'path';
 import Company from '../models/Company.js';
 import { verifyToken } from '../middleware/auth.js';
+import { authLimiter } from '../middleware/rateLimiter.js';
 import logger from '../config/logger.js';
 
 const router = express.Router();
@@ -162,9 +163,9 @@ router.get('/status', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-//  POST /login — Company Login
+//  POST /login — Company Login (with rate limiting)
 // ──────────────────────────────────────────────────────────────────────────────
-router.post('/login', async (req, res) => {
+router.post('/login', authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 
