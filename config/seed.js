@@ -12,19 +12,25 @@ const seedSubscriptionPlans = async () => {
       return;
     }
 
-    logger.info('Seeding subscription plans...');
+    logger.info('Seeding subscription plans (3 Company Studio Plans)...');
     await SubscriptionPlan.insertMany([
       {
-        name: 'Artist Starter',
-        description: 'Basic access to casting calls and talent directory profile.',
-        targetAudience: 'Creator',
-        monthlyPrice: 0,
-        yearlyPrice: 0,
+        name: 'Starter Casting Studio',
+        description: 'Essential casting & scouting tools for independent filmmakers and boutique agencies.',
+        targetAudience: 'Company',
+        monthlyPrice: 4999,
+        yearlyPrice: 49990,
         currency: 'INR',
-        features: ['5 Applications / month', '6 Portfolio Photos', 'Verified Artist Profile Search', 'Standard Support'],
+        features: [
+          'Up to 5 Active Casting Calls',
+          'Direct Messaging with 25 Talents/mo',
+          'Standard Escrow Protection',
+          'Email & Chat Support',
+          'Access to Verified Talent Directory'
+        ],
         maxCastingApplications: 5,
-        maxPortfolioPhotos: 6,
-        maxBookingsPerMonth: 2,
+        maxPortfolioPhotos: 20,
+        maxBookingsPerMonth: 10,
         prioritySupport: false,
         verifiedBadge: false,
         featuredListing: false,
@@ -35,13 +41,21 @@ const seedSubscriptionPlans = async () => {
         sortOrder: 1
       },
       {
-        name: 'Creator Spotlight Pro',
-        description: 'Full audition power, direct WhatsApp alerts, and verified blue checkmark.',
-        targetAudience: 'Creator',
-        monthlyPrice: 999,
-        yearlyPrice: 9990,
+        name: 'Pro Production House',
+        description: 'Full-featured power package for high-volume film shoots, OTT shows, and ad campaigns.',
+        targetAudience: 'Company',
+        monthlyPrice: 12999,
+        yearlyPrice: 129990,
         currency: 'INR',
-        features: ['Unlimited Casting Applications', 'Unlimited Portfolio & Video Reels', 'Blue Verified Artist Checkmark', 'Priority Audition Screening', 'Instant WhatsApp Casting Alerts', 'Direct Chat with Production Houses'],
+        features: [
+          'Unlimited Active Casting Calls',
+          'Unlimited Direct Talent Messaging',
+          '0% Platform Escrow Fee',
+          'Verified Studio Blue Badge',
+          'Dedicated Casting Coordinator',
+          'Instant Audition Video Downloads',
+          'Priority Search Placement'
+        ],
         maxCastingApplications: -1,
         maxPortfolioPhotos: -1,
         maxBookingsPerMonth: -1,
@@ -55,53 +69,21 @@ const seedSubscriptionPlans = async () => {
         sortOrder: 2
       },
       {
-        name: 'All-Access Pro Network',
-        description: 'Dual-purpose plan for actor-producers, casting directors & creator studios.',
-        targetAudience: 'Both',
-        monthlyPrice: 2499,
-        yearlyPrice: 24990,
-        currency: 'INR',
-        features: ['Unlimited Audition Submissions & Casting Calls', 'Unlimited Talent Search & Direct Contact', 'Verified Checkmark for Talent & Production', 'Escrow Protected Contracts & Zero Fees', 'Dedicated Account Manager'],
-        maxCastingApplications: -1,
-        maxPortfolioPhotos: -1,
-        maxBookingsPerMonth: -1,
-        prioritySupport: true,
-        verifiedBadge: true,
-        featuredListing: true,
-        badgeColor: 'purple',
-        isPopular: false,
-        trialDays: 7,
-        isActive: true,
-        sortOrder: 3
-      },
-      {
-        name: 'Starter Casting Studio',
-        description: 'Essential scouting & casting pipeline for independent producers.',
+        name: 'Enterprise Film Studio',
+        description: 'Custom SLA, multi-user seats, and bespoke talent contracting for major studios.',
         targetAudience: 'Company',
-        monthlyPrice: 4999,
-        yearlyPrice: 49990,
+        monthlyPrice: 29999,
+        yearlyPrice: 299990,
         currency: 'INR',
-        features: ['Up to 5 Active Casting Calls', 'Direct Messaging with 25 Talents/mo', 'Standard Escrow Protection', 'Email & Chat Support'],
-        maxCastingApplications: 5,
-        maxPortfolioPhotos: 20,
-        maxBookingsPerMonth: 10,
-        prioritySupport: false,
-        verifiedBadge: false,
-        featuredListing: false,
-        badgeColor: 'blue',
-        isPopular: false,
-        trialDays: 0,
-        isActive: true,
-        sortOrder: 4
-      },
-      {
-        name: 'Pro Production House',
-        description: 'Full-featured power package for high-volume shoots, OTT shows, and films.',
-        targetAudience: 'Company',
-        monthlyPrice: 12999,
-        yearlyPrice: 129990,
-        currency: 'INR',
-        features: ['Unlimited Active Casting Calls', 'Unlimited Direct Talent Messaging', '0% Platform Escrow Fee', 'Verified Studio Blue Badge', 'Dedicated Casting Coordinator', 'Instant Audition Video Downloads'],
+        features: [
+          'Everything in Pro Studio',
+          'Unlimited Casting Submissions',
+          'Multi-Seat Team Accounts (10 Users)',
+          'Custom Legal NDAs & Contracts',
+          'Dedicated Account Director',
+          'API Integration & Webhooks',
+          'VIP 24/7 Phone & WhatsApp Support'
+        ],
         maxCastingApplications: -1,
         maxPortfolioPhotos: -1,
         maxBookingsPerMonth: -1,
@@ -109,10 +91,10 @@ const seedSubscriptionPlans = async () => {
         verifiedBadge: true,
         featuredListing: true,
         badgeColor: 'gold',
-        isPopular: true,
+        isPopular: false,
         trialDays: 14,
         isActive: true,
-        sortOrder: 5
+        sortOrder: 3
       }
     ], { ordered: false });
     logger.info('✅ Subscription plans seeded successfully');
