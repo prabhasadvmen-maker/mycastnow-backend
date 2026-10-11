@@ -72,6 +72,14 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }
 });
 
+const getBaseUrl = (req) => {
+  if (process.env.BACKEND_URL && (process.env.NODE_ENV === 'production' || !req.get('host')?.includes('localhost'))) {
+    return process.env.BACKEND_URL.replace(/\/+$/, '');
+  }
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  return `${protocol}://${req.get('host')}`;
+};
+
 router.post('/upload-direct', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -79,11 +87,11 @@ router.post('/upload-direct', upload.single('file'), async (req, res) => {
     }
 
     let fileUrl;
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const baseUrl = getBaseUrl(req);
     if (useR2 && req.file.key) {
-      fileUrl = `${protocol}://${req.get('host')}/api/upload/file/${req.file.key}`;
+      fileUrl = `${baseUrl}/api/upload/file/${req.file.key}`;
     } else {
-      fileUrl = `${protocol}://${req.get('host')}/uploads/portfolio/${req.file.filename}`;
+      fileUrl = `${baseUrl}/uploads/portfolio/${req.file.filename}`;
     }
 
     res.json({ success: true, url: fileUrl, type: req.file.mimetype });
@@ -99,13 +107,13 @@ router.post('/portfolio', upload.array('files', 10), (req, res) => {
       return res.status(400).json({ error: 'No files uploaded' });
     }
 
+    const baseUrl = getBaseUrl(req);
     const fileUrls = req.files.map(file => {
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
       if (useR2 && file.key) {
-        return { url: `${protocol}://${req.get('host')}/api/upload/file/${file.key}`, type: file.mimetype };
+        return { url: `${baseUrl}/api/upload/file/${file.key}`, type: file.mimetype };
       }
       return {
-        url: `${protocol}://${req.get('host')}/uploads/portfolio/${file.filename}`,
+        url: `${baseUrl}/uploads/portfolio/${file.filename}`,
         type: file.mimetype
       };
     });
@@ -139,8 +147,7 @@ router.post('/presigned-url', async (req, res) => {
 
       const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
       const uploadUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-      const publicUrl = `${protocol}://${req.get('host')}/api/upload/file/${key}`;
+      const publicUrl = `${getBaseUrl(req)}/api/upload/file/${key}`;
 
       res.json({ success: true, uploadUrl, fileUrl: publicUrl, key });
     } else {

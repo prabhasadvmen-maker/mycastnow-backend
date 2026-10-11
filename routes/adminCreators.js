@@ -4,6 +4,28 @@ import Payment from '../models/Payment.js';
 
 const router = express.Router();
 
+const sanitizeUrl = (url) => {
+  if (!url || typeof url !== 'string') return url;
+  const backend = process.env.BACKEND_URL || 'https://mycastnow-backend.onrender.com';
+  return url.replace(/^http:\/\/(localhost|127\.0\.0\.1):5000/, backend);
+};
+
+const sanitizeCreatorDoc = (doc) => {
+  if (doc.basicDetails?.profilePhoto) {
+    doc.basicDetails.profilePhoto = sanitizeUrl(doc.basicDetails.profilePhoto);
+  }
+  if (Array.isArray(doc.portfolio?.photos)) {
+    doc.portfolio.photos = doc.portfolio.photos.map(sanitizeUrl);
+  }
+  if (Array.isArray(doc.portfolio?.videos)) {
+    doc.portfolio.videos = doc.portfolio.videos.map(sanitizeUrl);
+  }
+  if (doc.introVideo) {
+    doc.introVideo = sanitizeUrl(doc.introVideo);
+  }
+  return doc;
+};
+
 // GET all creators
 router.get('/', async (req, res) => {
   try {
@@ -17,7 +39,7 @@ router.get('/', async (req, res) => {
       if (!doc.basicDetails.profilePhoto || doc.basicDetails.profilePhoto.startsWith('blob:')) {
         doc.basicDetails.profilePhoto = doc.portfolio?.photos?.[0] || '';
       }
-      return doc;
+      return sanitizeCreatorDoc(doc);
     });
     res.json(formatted);
   } catch (error) {
@@ -39,7 +61,7 @@ router.get('/:id', async (req, res) => {
     if (!doc.basicDetails.profilePhoto || doc.basicDetails.profilePhoto.startsWith('blob:')) {
       doc.basicDetails.profilePhoto = doc.portfolio?.photos?.[0] || '';
     }
-    res.json(doc);
+    res.json(sanitizeCreatorDoc(doc));
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }

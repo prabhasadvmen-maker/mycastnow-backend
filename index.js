@@ -215,6 +215,31 @@ connectDB()
     } catch (logoErr) {
       logger.warn('Company logo migration notice: ' + logoErr.message);
     }
+
+    try {
+      const prodBackend = process.env.BACKEND_URL || 'https://mycastnow-backend.onrender.com';
+      const localhostRegex = /http:\/\/(localhost|127\.0\.0\.1):5000/;
+      const creatorsWithLocalhost = await Creator.find({
+        $or: [
+          { 'basicDetails.profilePhoto': { $regex: 'localhost:5000' } },
+          { 'portfolio.photos': { $regex: 'localhost:5000' } }
+        ]
+      });
+      for (const cr of creatorsWithLocalhost) {
+        let modified = false;
+        if (cr.basicDetails?.profilePhoto && cr.basicDetails.profilePhoto.includes('localhost:5000')) {
+          cr.basicDetails.profilePhoto = cr.basicDetails.profilePhoto.replace(localhostRegex, prodBackend);
+          modified = true;
+        }
+        if (Array.isArray(cr.portfolio?.photos)) {
+          cr.portfolio.photos = cr.portfolio.photos.map(p => typeof p === 'string' ? p.replace(localhostRegex, prodBackend) : p);
+          modified = true;
+        }
+        if (modified) await cr.save();
+      }
+    } catch (cleanErr) {
+      logger.warn('Media URL migration notice: ' + cleanErr.message);
+    }
   })
   .then(() => {
     const server = app.listen(PORT, () => {
