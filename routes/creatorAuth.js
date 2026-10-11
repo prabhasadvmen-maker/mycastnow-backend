@@ -179,6 +179,7 @@ router.post('/verify-otp', authLimiter, async (req, res) => {
     if (!creator) {
       creator = new Creator({
         phone,
+        status: 'incomplete',
         onboardingStep: 1,
         isProfileComplete: false,
         isApproved: false
@@ -233,11 +234,14 @@ router.get('/me', verifyToken, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-//  4. PUT /update-profile — Whitelist-based safe profile update
+//  4. PUT & POST /update-profile — Whitelist-based safe & incremental profile update
 // ──────────────────────────────────────────────────────────────────────────────
-router.put('/update-profile', verifyToken, async (req, res) => {
+const handleUpdateProfile = async (req, res) => {
   try {
-    // SECURITY: Only allow safe fields — never allow isApproved, status, role etc.
+    const creator = await Creator.findById(req.user.id);
+    if (!creator) return res.status(404).json({ success: false, message: 'Creator not found' });
+
+    // SECURITY: Only allow safe fields — never allow isApproved, role etc.
     const ALLOWED_FIELDS = [
       'basicDetails', 'professionalDetails', 'physicalDetails',
       'portfolio', 'pricing', 'availability', 'socialLinks',
@@ -245,6 +249,8 @@ router.put('/update-profile', verifyToken, async (req, res) => {
     ];
 
     const updates = {};
+    const unsetObj = {};
+
     for (const key of ALLOWED_FIELDS) {
       if (req.body[key] !== undefined) {
         updates[key] = req.body[key];
@@ -255,13 +261,82 @@ router.put('/update-profile', verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: 'No valid fields provided to update' });
     }
 
+    // Sanitize email to prevent duplicate null/empty index collision
+    if (updates.email !== undefined) {
+      if (!updates.email || typeof updates.email !== 'string' || updates.email.trim() === '') {
+        delete updates.email;
+        unsetObj.email = 1;
+      } else {
+        updates.email = updates.email.trim().toLowerCase();
+      }
+    }
+
+    // Merge & Sanitize basicDetails
+    if (updates.basicDetails && typeof updates.basicDetails === 'object') {
+      const existingBasic = creator.basicDetails ? creator.basicDetails.toObject() : {};
+      const mergedBasic = { ...existingBasic, ...updates.basicDetails };
+      if (!mergedBasic.dob || mergedBasic.dob === '') {
+        delete mergedBasic.dob;
+      }
+      updates.basicDetails = mergedBasic;
+    }
+
+    // Merge & Sanitize professionalDetails
+    if (updates.professionalDetails && typeof updates.professionalDetails === 'object') {
+      const existingProf = creator.professionalDetails ? creator.professionalDetails.toObject() : {};
+      updates.professionalDetails = { ...existingProf, ...updates.professionalDetails };
+    }
+
+    // Merge & Sanitize physicalDetails
+    if (updates.physicalDetails && typeof updates.physicalDetails === 'object') {
+      const existingPhysical = creator.physicalDetails ? creator.physicalDetails.toObject() : {};
+      updates.physicalDetails = { ...existingPhysical, ...updates.physicalDetails };
+    }
+
+    // Merge & Sanitize socialLinks
+    if (updates.socialLinks && typeof updates.socialLinks === 'object') {
+      const existingSocial = creator.socialLinks ? creator.socialLinks.toObject() : {};
+      updates.socialLinks = { ...existingSocial, ...updates.socialLinks };
+    }
+
+    // Merge & Sanitize pricing
+    if (updates.pricing && typeof updates.pricing === 'object') {
+      const existingPricing = creator.pricing ? creator.pricing.toObject() : {};
+      const mergedPricing = { ...existingPricing, ...updates.pricing };
+      if (mergedPricing.hourlyRate !== undefined && mergedPricing.hourlyRate !== null && mergedPricing.hourlyRate !== '') {
+        mergedPricing.hourlyRate = Number(mergedPricing.hourlyRate);
+      } else {
+        delete mergedPricing.hourlyRate;
+      }
+      if (mergedPricing.dayRate !== undefined && mergedPricing.dayRate !== null && mergedPricing.dayRate !== '') {
+        mergedPricing.dayRate = Number(mergedPricing.dayRate);
+      } else {
+        delete mergedPricing.dayRate;
+      }
+      updates.pricing = mergedPricing;
+    }
+
+    // Status management:
+    // If profile completed -> 'pending' review
+    // If profile not completed and not already approved/rejected -> 'incomplete'
+    if (updates.isProfileComplete === true) {
+      updates.status = 'pending';
+    } else if (updates.isProfileComplete === false || !creator.isProfileComplete) {
+      if (creator.status !== 'approved' && creator.status !== 'rejected') {
+        updates.status = 'incomplete';
+      }
+    }
+
+    const updateQuery = { $set: updates };
+    if (Object.keys(unsetObj).length > 0) {
+      updateQuery.$unset = unsetObj;
+    }
+
     const updatedCreator = await Creator.findByIdAndUpdate(
       req.user.id,
-      { $set: updates },
+      updateQuery,
       { returnDocument: 'after', runValidators: true }
     ).select('-password');
-
-    if (!updatedCreator) return res.status(404).json({ success: false, message: 'Creator not found' });
 
     res.json({ success: true, creator: updatedCreator });
   } catch (error) {
@@ -271,7 +346,10 @@ router.put('/update-profile', verifyToken, async (req, res) => {
     logger.error('Update creator profile error:', error);
     res.status(500).json({ success: false, message: 'Failed to update profile' });
   }
-});
+};
+
+router.put('/update-profile', verifyToken, handleUpdateProfile);
+router.post('/update-profile', verifyToken, handleUpdateProfile);
 
 // ──────────────────────────────────────────────────────────────────────────────
 //  5. PUT /change-password — Secure password change

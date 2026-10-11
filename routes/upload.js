@@ -157,9 +157,10 @@ router.get(/^\/file\/(.+)$/, async (req, res) => {
     const rawKey = req.params[0];
 
     const normalizedKey = path.normalize(rawKey).replace(/\\/g, '/');
+    const allowedPrefixes = ['portfolio/', 'companies/', 'logos/', 'avatars/', 'documents/'];
     if (
       normalizedKey.includes('..') ||
-      (!normalizedKey.startsWith('portfolio/') && !normalizedKey.startsWith('companies/'))
+      !allowedPrefixes.some(p => normalizedKey.startsWith(p))
     ) {
       return res.status(400).json({ error: 'Invalid file path' });
     }
@@ -167,7 +168,22 @@ router.get(/^\/file\/(.+)$/, async (req, res) => {
     if (useR2 && s3) {
       const command = new GetObjectCommand({ Bucket: bucketName, Key: normalizedKey });
       const response = await s3.send(command);
-      if (response.ContentType) res.setHeader('Content-Type', response.ContentType);
+
+      const ext = path.extname(normalizedKey).toLowerCase();
+      const mimeTypes = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.mp4': 'video/mp4',
+        '.pdf': 'application/pdf'
+      };
+      const contentType = mimeTypes[ext] || (response.ContentType && response.ContentType !== 'application/octet-stream' ? response.ContentType : 'image/jpeg');
+
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
       if (response.ContentLength) res.setHeader('Content-Length', response.ContentLength);
       return response.Body.pipe(res);
     } else {

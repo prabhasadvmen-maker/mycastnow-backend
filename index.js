@@ -9,6 +9,8 @@ import hpp from 'hpp';
 import connectDB from './config/db.js';
 import seedSubscriptionPlans from './config/seed.js';
 import logger from './config/logger.js';
+import Creator from './models/Creator.js';
+import Company from './models/Company.js';
 import errorHandler from './middleware/errorHandler.js';
 import { requireAdmin } from './middleware/auth.js';
 import { apiLimiter, authLimiter, uploadLimiter } from './middleware/rateLimiter.js';
@@ -38,7 +40,7 @@ import companyProfileRoutes from './routes/companyProfile.js';
 import creatorPortalRoutes from './routes/creatorPortal.js';
 import adminSettingsRoutes from './routes/adminSettings.js';
 import publicLandingRoutes from './routes/publicLanding.js';
-import paymentsRoutes from './routes/payments.js';
+import paymentsRoutes, { syncLegacyPayments } from './routes/payments.js';
 
 // ── Startup checks ───────────────────────────────────────────────────────────
 if (!process.env.JWT_SECRET) {
@@ -100,6 +102,10 @@ app.use(hpp());
 
 // ── Static Files with Caching ────────────────────────────────────────────────
 app.use('/uploads', express.static('uploads', {
+  maxAge: '1d',
+  etag: false
+}));
+app.use('/api/uploads', express.static('uploads', {
   maxAge: '1d',
   etag: false
 }));
@@ -184,6 +190,34 @@ app.use(errorHandler);
 // ── Database & Server Start ───────────────────────────────────────────────────
 connectDB()
   .then(seedSubscriptionPlans)
+  .then(async () => {
+    try {
+      await Creator.updateMany(
+        { isProfileComplete: { $ne: true }, status: 'pending' },
+        { $set: { status: 'incomplete' } }
+      );
+    } catch (migErr) {
+      logger.warn('Creator status migration notice: ' + migErr.message);
+    }
+
+    try {
+      await syncLegacyPayments();
+      logger.info('Legacy onboarding payments synced to Payment collection.');
+    } catch (payMigErr) {
+      logger.warn('Payment migration notice: ' + payMigErr.message);
+    }
+
+    try {
+      const brokenLogos = await Company.find({ logo: { $regex: 'pub-mycastnow\\.r2\\.dev' } });
+      for (const c of brokenLogos) {
+        const key = c.logo.split('pub-mycastnow.r2.dev/')[1];
+        c.logo = `/api/upload/file/${key}`;
+        await c.save();
+      }
+    } catch (logoErr) {
+      logger.warn('Company logo migration notice: ' + logoErr.message);
+    }
+  })
   .then(() => {
     const server = app.listen(PORT, () => {
       logger.info(`✅ Server running on port ${PORT} | ENV: ${process.env.NODE_ENV || 'development'}`);

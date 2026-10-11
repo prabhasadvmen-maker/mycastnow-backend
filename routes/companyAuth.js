@@ -60,9 +60,11 @@ async function uploadLogo(file, req) {
       Body: file.buffer,
       ContentType: file.mimetype
     }));
-    // Return public CDN URL
-    const publicUrl = process.env.R2_PUBLIC_URL || `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET}`;
-    return `${publicUrl}/${key}`;
+    // Return backend proxy URL
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+    const host = req.get('host');
+    const base = process.env.BACKEND_URL || `${protocol}://${host}`;
+    return `${base}/api/upload/file/${key}`;
   } else {
     // Local fallback (development only)
     const fs = await import('fs');
@@ -71,7 +73,9 @@ async function uploadLogo(file, req) {
     const localPath = `${localDir}/${key.replace('logos/', '')}`;
     fs.writeFileSync(localPath, file.buffer);
     const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    return `${protocol}://${req.get('host')}/uploads/companies/${path.basename(localPath)}`;
+    const host = req.get('host');
+    const base = process.env.BACKEND_URL || `${protocol}://${host}`;
+    return `${base}/uploads/companies/${path.basename(localPath)}`;
   }
 }
 

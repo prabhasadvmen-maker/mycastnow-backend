@@ -2,6 +2,7 @@ import express from 'express';
 import Company from '../models/Company.js';
 import HelpTicket from '../models/HelpTicket.js';
 import { verifyToken } from '../middleware/auth.js';
+import { resolveCompanyLogoUrl } from './company.js';
 import logger from '../config/logger.js';
 
 const router = express.Router();
@@ -10,7 +11,11 @@ router.get('/', verifyToken, async (req, res) => {
   try {
     const company = await Company.findById(req.user.id).select('-password');
     if (!company) return res.status(404).json({ success: false, message: 'Company not found' });
-    res.json({ success: true, company: { ...company.toObject(), id: company._id } });
+    const doc = company.toObject();
+    if (doc.logo) {
+      doc.logo = resolveCompanyLogoUrl(req, doc.logo);
+    }
+    res.json({ success: true, company: { ...doc, id: company._id } });
   } catch (err) {
     logger.error('Fetch company profile error:', err);
     res.status(500).json({ success: false, message: 'Server error', error: err.message });
@@ -52,7 +57,12 @@ router.put('/', verifyToken, async (req, res) => {
 
     if (!updated) return res.status(404).json({ success: false, message: 'Company not found' });
 
-    res.json({ success: true, message: 'Company profile updated successfully!', company: updated });
+    const doc = updated.toObject();
+    if (doc.logo) {
+      doc.logo = resolveCompanyLogoUrl(req, doc.logo);
+    }
+
+    res.json({ success: true, message: 'Company profile updated successfully!', company: doc });
   } catch (err) {
     logger.error('Update company profile error:', err);
     res.status(500).json({ success: false, message: 'Server error', error: err.message });

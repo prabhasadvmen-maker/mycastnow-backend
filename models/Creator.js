@@ -44,8 +44,8 @@ const creatorSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'approved', 'rejected'],
-    default: 'pending'
+    enum: ['incomplete', 'pending', 'approved', 'rejected'],
+    default: 'incomplete'
   },
   isActive: {
     type: Boolean,

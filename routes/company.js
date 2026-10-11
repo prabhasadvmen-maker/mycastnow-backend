@@ -41,6 +41,7 @@ if (useR2) {
   storage = multerS3({
     s3,
     bucket: bucketName,
+    contentType: multerS3.AUTO_CONTENT_TYPE,
     metadata: (req, file, cb) => cb(null, { fieldName: file.fieldname }),
     key: (req, file, cb) => {
       const ext = path.extname(file.originalname).toLowerCase();
@@ -69,6 +70,24 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 } // 5MB for logos
 });
 
+// Helper: resolve reliable URL for company logo
+export const resolveCompanyLogoUrl = (req, logoUrl) => {
+  if (!logoUrl) return '';
+  const protocol = req?.headers?.['x-forwarded-proto'] || req?.protocol || 'http';
+  const host = req?.get ? req.get('host') : (process.env.BACKEND_URL ? '' : '127.0.0.1:5000');
+  const base = process.env.BACKEND_URL || `${protocol}://${host}`;
+
+  // If URL has broken pub-mycastnow.r2.dev, route through backend upload proxy
+  if (logoUrl.includes('pub-mycastnow.r2.dev')) {
+    const key = logoUrl.split('pub-mycastnow.r2.dev/')[1];
+    return `${base}/api/upload/file/${key}`;
+  }
+  if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) {
+    return logoUrl;
+  }
+  return `${base}${logoUrl.startsWith('/') ? '' : '/'}${logoUrl}`;
+};
+
 // Create Company
 router.post('/', upload.single('logo'), async (req, res) => {
   try {
@@ -85,9 +104,12 @@ router.post('/', upload.single('logo'), async (req, res) => {
 
     let logoUrl = '';
     if (req.file) {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.get('host');
+      const base = process.env.BACKEND_URL || `${protocol}://${host}`;
       logoUrl = useR2
-        ? `${process.env.R2_PUBLIC_URL}/${req.file.key}`
-        : `${process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`}/uploads/companies/${req.file.filename}`;
+        ? `${base}/api/upload/file/${req.file.key}`
+        : `${base}/uploads/companies/${req.file.filename}`;
     }
 
     const newCompany = new Company({
@@ -107,6 +129,9 @@ router.post('/', upload.single('logo'), async (req, res) => {
 
     const companyResponse = newCompany.toObject();
     delete companyResponse.password;
+    if (companyResponse.logo) {
+      companyResponse.logo = resolveCompanyLogoUrl(req, companyResponse.logo);
+    }
 
     res.status(201).json(companyResponse);
   } catch (err) {
@@ -119,7 +144,14 @@ router.post('/', upload.single('logo'), async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     const companies = await Company.find().select('-password').sort({ createdAt: -1 });
-    res.json(companies);
+    const formatted = companies.map(c => {
+      const doc = c.toObject();
+      if (doc.logo) {
+        doc.logo = resolveCompanyLogoUrl(req, doc.logo);
+      }
+      return doc;
+    });
+    res.json(formatted);
   } catch (err) {
     logger.error('Error fetching companies:', err);
     res.status(500).json({ message: 'Server Error while fetching companies' });
@@ -147,15 +179,21 @@ router.put('/:id', upload.single('logo'), async (req, res) => {
     if (location) company.location = location;
 
     if (req.file) {
+      const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+      const host = req.get('host');
+      const base = process.env.BACKEND_URL || `${protocol}://${host}`;
       company.logo = useR2
-        ? `${process.env.R2_PUBLIC_URL}/${req.file.key}`
-        : `${process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`}/uploads/companies/${req.file.filename}`;
+        ? `${base}/api/upload/file/${req.file.key}`
+        : `${base}/uploads/companies/${req.file.filename}`;
     }
 
     await company.save();
 
     const companyResponse = company.toObject();
     delete companyResponse.password;
+    if (companyResponse.logo) {
+      companyResponse.logo = resolveCompanyLogoUrl(req, companyResponse.logo);
+    }
 
     res.json(companyResponse);
   } catch (err) {

@@ -7,16 +7,16 @@ const router = express.Router();
 // Fetch all users (Creators & Companies combined)
 router.get('/', async (req, res) => {
   try {
-    const creators = await Creator.find({}, 'phone email basicDetails.fullName professionalDetails.primaryCategory status isActive createdAt');
+    const creators = await Creator.find({}, 'phone email basicDetails.fullName professionalDetails.primaryCategory status isActive isProfileComplete createdAt');
     const companies = await Company.find({}, 'phone email companyName industry status isActive createdAt');
 
     const formattedCreators = creators.map(c => ({
       _id: c._id,
-      name: c.basicDetails?.fullName || 'Unnamed Creator',
+      name: c.basicDetails?.fullName || 'Incomplete Lead',
       contact: c.email || c.phone,
       role: 'Creator',
       category: c.professionalDetails?.primaryCategory || 'N/A',
-      status: c.status,
+      status: (!c.isProfileComplete && c.status !== 'approved' && c.status !== 'rejected') ? 'incomplete' : (c.status || 'incomplete'),
       isActive: c.isActive,
       createdAt: c.createdAt
     }));

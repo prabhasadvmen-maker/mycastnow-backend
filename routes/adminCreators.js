@@ -1,5 +1,6 @@
 import express from 'express';
 import Creator from '../models/Creator.js';
+import Payment from '../models/Payment.js';
 
 const router = express.Router();
 
@@ -7,7 +8,14 @@ const router = express.Router();
 router.get('/', async (req, res) => {
   try {
     const creators = await Creator.find().sort({ createdAt: -1 });
-    res.json(creators);
+    const formatted = creators.map(c => {
+      const doc = c.toObject();
+      if (!doc.isProfileComplete && doc.status !== 'approved' && doc.status !== 'rejected') {
+        doc.status = 'incomplete';
+      }
+      return doc;
+    });
+    res.json(formatted);
   } catch (error) {
     console.error('Error fetching creators:', error);
     res.status(500).json({ message: 'Server Error' });
@@ -19,7 +27,11 @@ router.get('/:id', async (req, res) => {
   try {
     const creator = await Creator.findById(req.params.id);
     if (!creator) return res.status(404).json({ message: 'Creator not found' });
-    res.json(creator);
+    const doc = creator.toObject();
+    if (!doc.isProfileComplete && doc.status !== 'approved' && doc.status !== 'rejected') {
+      doc.status = 'incomplete';
+    }
+    res.json(doc);
   } catch (error) {
     res.status(500).json({ message: 'Server Error' });
   }
@@ -28,8 +40,8 @@ router.get('/:id', async (req, res) => {
 // PUT update creator status (Approve/Reject)
 router.put('/:id/status', async (req, res) => {
   try {
-    const { status, rejectionReason } = req.body; // 'approved' or 'rejected'
-    if (!['approved', 'rejected', 'pending'].includes(status)) {
+    const { status, rejectionReason } = req.body; // 'approved', 'rejected', 'pending', 'incomplete'
+    if (!['approved', 'rejected', 'pending', 'incomplete'].includes(status)) {
       return res.status(400).json({ message: 'Invalid status' });
     }
 
@@ -74,12 +86,83 @@ router.put('/:id/active', async (req, res) => {
   }
 });
 
-// DELETE creator account completely
+// DELETE creator account completely (Preserving financial/payment ledger permanently)
 router.delete('/:id', async (req, res) => {
   try {
-    const deletedCreator = await Creator.findByIdAndDelete(req.params.id);
-    if (!deletedCreator) return res.status(404).json({ message: 'Creator not found' });
-    res.json({ success: true, message: 'Creator deleted successfully' });
+    const creator = await Creator.findById(req.params.id);
+    if (!creator) return res.status(404).json({ message: 'Creator not found' });
+
+    const ONBOARDING_FEE = Number(process.env.CREATOR_ONBOARDING_FEE) || 499;
+    const hasPaid = creator.onboardingFeePaid || Boolean(creator.onboardingPaymentId);
+
+    // If the creator made an onboarding payment, ensure it exists in the permanent Payment collection
+    if (hasPaid) {
+      const paymentId = creator.onboardingPaymentId || `legacy_pay_${creator._id}`;
+      const orderId = creator.onboardingOrderId || `legacy_order_${creator._id}`;
+      const paidAt = creator.onboardingPaidAt || creator.createdAt || new Date();
+      const creatorName = creator.basicDetails?.fullName || 'Deleted Creator';
+      const creatorPhone = creator.phone || '';
+      const creatorEmail = creator.email || '';
+      const profilePhoto = creator.basicDetails?.profilePhoto || '';
+
+      await Payment.findOneAndUpdate(
+        {
+          $or: [
+            { paymentId: paymentId },
+            { creatorId: creator._id }
+          ]
+        },
+        {
+          $set: {
+            creatorId: creator._id,
+            creatorName,
+            creatorPhone,
+            creatorEmail,
+            profilePhoto,
+            basicDetails: {
+              fullName: creatorName,
+              profilePhoto
+            },
+            phone: creatorPhone,
+            email: creatorEmail,
+            amount: ONBOARDING_FEE,
+            currency: 'INR',
+            paymentType: 'onboarding_fee',
+            orderId,
+            paymentId,
+            onboardingPaymentId: paymentId,
+            onboardingOrderId: orderId,
+            onboardingPaidAt: paidAt,
+            status: 'paid',
+            paidAt,
+            isCreatorDeleted: true,
+            deletedAt: new Date()
+          }
+        },
+        { upsert: true, new: true }
+      );
+    }
+
+    // Freeze and preserve all payment records for this creator as isCreatorDeleted: true
+    await Payment.updateMany(
+      { creatorId: creator._id },
+      {
+        $set: {
+          isCreatorDeleted: true,
+          deletedAt: new Date(),
+          creatorName: creator.basicDetails?.fullName || 'Deleted Creator',
+          creatorPhone: creator.phone || '',
+          'basicDetails.fullName': creator.basicDetails?.fullName || 'Deleted Creator',
+          'basicDetails.profilePhoto': creator.basicDetails?.profilePhoto || '',
+          phone: creator.phone || ''
+        }
+      }
+    );
+
+    // Now delete only the Creator profile document
+    await Creator.findByIdAndDelete(req.params.id);
+
+    res.json({ success: true, message: 'Creator deleted successfully. Payment records retained.' });
   } catch (error) {
     console.error('Error deleting creator:', error);
     res.status(500).json({ message: 'Server Error' });
