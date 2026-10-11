@@ -7,7 +7,8 @@ import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import UserSubscription from '../models/UserSubscription.js';
 import ProfileBoost from '../models/ProfileBoost.js';
 import Review from '../models/Review.js';
-import WalletTransaction from '../models/WalletTransaction.js';
+import Payment from '../models/Payment.js';
+import logger from '../config/logger.js';
 
 const router = express.Router();
 
@@ -18,11 +19,10 @@ router.get('/overview', async (req, res) => {
   try {
     const [
       // Revenue streams
+      onboardingPaidAgg,
       bookingPaidAgg,
       subscriptionPaidAgg,
       boostPaidAgg,
-      walletCreditsAgg,
-      adminWithdrawalsAgg,
       // User counts
       creatorsCount,
       approvedCreatorsCount,
@@ -51,12 +51,12 @@ router.get('/overview', async (req, res) => {
       starDistribution,
       // Creator categories
       categoryAgg,
-      // Detailed Wallet aggregations & transactions
-      walletAllTxs,
-      walletInflowAgg,
-      walletOutflowAgg,
-      walletPendingAgg
     ] = await Promise.all([
+      // Onboarding Revenue
+      Payment.aggregate([
+        { $match: { status: 'paid' } },
+        { $group: { _id: null, sum: { $sum: '$amount' } } }
+      ]),
       // Bookings Revenue
       Booking.aggregate([
         { $match: { paymentStatus: 'Paid' } },
@@ -72,17 +72,6 @@ router.get('/overview', async (req, res) => {
         { $match: { paymentStatus: 'Paid' } },
         { $group: { _id: null, sum: { $sum: '$amountPaid' } } }
       ]),
-      // Direct Wallet Credits
-      WalletTransaction.aggregate([
-        { $match: { type: 'Credit', status: 'Completed' } },
-        { $group: { _id: null, sum: { $sum: '$amount' } } }
-      ]),
-      // Admin Withdrawals
-      WalletTransaction.aggregate([
-        { $match: { userType: 'Admin', type: 'Withdrawal', status: 'Completed' } },
-        { $group: { _id: null, sum: { $sum: '$amount' } } }
-      ]),
-
       // Creators
       Creator.countDocuments(),
       Creator.countDocuments({ status: 'approved' }),
@@ -126,40 +115,15 @@ router.get('/overview', async (req, res) => {
         { $group: { _id: '$professionalDetails.primaryCategory', count: { $sum: 1 } } },
         { $sort: { count: -1 } }
       ]),
-
-      // Detailed Wallet
-      WalletTransaction.find({}).sort({ createdAt: -1 }).limit(10).lean(),
-      WalletTransaction.aggregate([
-        { $match: { type: 'Credit', status: 'Completed' } },
-        { $group: { _id: null, sum: { $sum: '$amount' }, count: { $sum: 1 } } }
-      ]),
-      WalletTransaction.aggregate([
-        { $match: { type: 'Withdrawal', status: 'Completed' } },
-        { $group: { _id: null, sum: { $sum: '$amount' }, count: { $sum: 1 } } }
-      ]),
-      WalletTransaction.aggregate([
-        { $match: { status: 'Pending' } },
-        { $group: { _id: null, sum: { $sum: '$amount' }, count: { $sum: 1 } } }
-      ])
     ]);
 
     // Financial calculations
+    const onboardingRevenue   = onboardingPaidAgg[0]?.sum || 0;
     const bookingRevenue      = bookingPaidAgg[0]?.sum || 0;
     const subscriptionRevenue = subscriptionPaidAgg[0]?.sum || 0;
     const boostRevenue        = boostPaidAgg[0]?.sum || 0;
-    const walletCredits       = walletCreditsAgg[0]?.sum || 0;
-    const grossRevenue        = bookingRevenue + subscriptionRevenue + boostRevenue + walletCredits;
-    const totalWithdrawn      = adminWithdrawalsAgg[0]?.sum || 0;
-    const netRetained         = Math.max(0, grossRevenue - totalWithdrawn);
-
-    // Wallet deep-dive details
-    const walletInflowTotal   = walletInflowAgg[0]?.sum || 0;
-    const walletInflowCount   = walletInflowAgg[0]?.count || 0;
-    const walletOutflowTotal  = walletOutflowAgg[0]?.sum || 0;
-    const walletOutflowCount  = walletOutflowAgg[0]?.count || 0;
-    const walletPendingTotal  = walletPendingAgg[0]?.sum || 0;
-    const walletPendingCount  = walletPendingAgg[0]?.count || 0;
-    const walletLiquidBalance = Math.max(0, walletInflowTotal - walletOutflowTotal);
+    const grossRevenue        = onboardingRevenue + bookingRevenue + subscriptionRevenue + boostRevenue;
+    const netRetained         = grossRevenue;
 
     // Subscription deep-dive details
     const enrichedPlans = allPlans.map(p => {
@@ -188,16 +152,47 @@ router.get('/overview', async (req, res) => {
       if (s._id >= 1 && s._id <= 5) starMap[s._id] = s.count;
     });
 
-    // Monthly Performance Trends
-    const months = ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-    const revenueTrend = [
-      { month: 'May', revenue: Math.round(grossRevenue * 0.25), bookings: 1, users: 1 },
-      { month: 'Jun', revenue: Math.round(grossRevenue * 0.40), bookings: 1, users: 2 },
-      { month: 'Jul', revenue: Math.round(grossRevenue * 0.60), bookings: 2, users: 2 },
-      { month: 'Aug', revenue: Math.round(grossRevenue * 0.75), bookings: 2, users: 3 },
-      { month: 'Sep', revenue: Math.round(grossRevenue * 0.90), bookings: 3, users: 4 },
-      { month: 'Oct (Current)', revenue: grossRevenue, bookings: bookingsCount, users: creatorsCount + companiesCount }
-    ];
+    // Real Monthly Performance Trends for last 6 months
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    const revenueTrend = [];
+
+    // Aggregate payments by month
+    const monthlyPaymentAgg = await Payment.aggregate([
+      { $match: { status: 'paid' } },
+      {
+        $group: {
+          _id: {
+            year: { $year: { $ifNull: ['$paidAt', '$createdAt'] } },
+            month: { $month: { $ifNull: ['$paidAt', '$createdAt'] } }
+          },
+          revenue: { $sum: '$amount' }
+        }
+      }
+    ]);
+
+    const paymentMap = {};
+    monthlyPaymentAgg.forEach(m => {
+      if (m._id?.year && m._id?.month) {
+        paymentMap[`${m._id.year}-${m._id.month}`] = m.revenue || 0;
+      }
+    });
+
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth() + 1;
+      const isCurrent = i === 0;
+      const key = `${y}-${m}`;
+      const rev = paymentMap[key] || (isCurrent ? grossRevenue : 0);
+
+      revenueTrend.push({
+        month: isCurrent ? `${monthNames[d.getMonth()]} (Current)` : monthNames[d.getMonth()],
+        revenue: rev,
+        bookings: isCurrent ? bookingsCount : 0,
+        users: isCurrent ? (creatorsCount + companiesCount) : 0
+      });
+    }
 
     res.json({
       success: true,
@@ -205,7 +200,6 @@ router.get('/overview', async (req, res) => {
         // High-level KPIs
         kpis: {
           grossRevenue,
-          totalWithdrawn,
           netRetained,
           totalUsers: creatorsCount + companiesCount,
           totalCreators: creatorsCount,
@@ -214,42 +208,18 @@ router.get('/overview', async (req, res) => {
           totalCompanies: companiesCount,
           totalCastings: castingsCount,
           openCastings: openCastingsCount,
-          totalApplicants: (castingApplicantsAgg[0]?.totalApplicants || 0) + 12,
+          totalApplicants: castingApplicantsAgg[0]?.totalApplicants || 0,
           totalBookings: bookingsCount,
           completedBookings: completedBookingsCount,
           confirmedBookings: confirmedBookingsCount,
           activeSubscriptions: activeSubsCount,
           activeBoosts: activeBoostsCount,
-          boostImpressions: boostImpressionsAgg[0]?.totalImpressions || 1420,
-          boostClicks: boostImpressionsAgg[0]?.totalClicks || 185,
+          boostImpressions: boostImpressionsAgg[0]?.totalImpressions || 0,
+          boostClicks: boostImpressionsAgg[0]?.totalClicks || 0,
           totalReviews: reviewsCount,
-          averageRating: Number((ratingAgg[0]?.avg || 4.7).toFixed(1)),
-          avgCompanyToCreator: Number((c2cRatingAgg[0]?.avg || 4.5).toFixed(1)),
-          avgCreatorToCompany: Number((cr2cRatingAgg[0]?.avg || 5.0).toFixed(1))
-        },
-
-        // Dedicated Real Wallet Analytics
-        walletAnalytics: {
-          totalInflow: walletInflowTotal,
-          inflowCount: walletInflowCount,
-          totalOutflow: walletOutflowTotal,
-          outflowCount: walletOutflowCount,
-          pendingTotal: walletPendingTotal,
-          pendingCount: walletPendingCount,
-          liquidBalance: walletLiquidBalance,
-          totalTransactions: walletAllTxs.length,
-          recentTransactions: walletAllTxs.map(tx => ({
-            id: tx._id,
-            userName: tx.userName || (tx.userType === 'Admin' ? 'Super Admin' : 'Platform User'),
-            userType: tx.userType,
-            type: tx.type,
-            amount: tx.amount,
-            status: tx.status,
-            description: tx.description || `${tx.type} Transaction`,
-            referenceId: tx.referenceId || tx.payoutDetails?.utrNumber || '-',
-            payoutMethod: tx.payoutDetails?.payoutMethod || 'Bank / UPI',
-            date: tx.createdAt
-          }))
+          averageRating: ratingAgg[0]?.avg ? Number(ratingAgg[0].avg.toFixed(1)) : 0,
+          avgCompanyToCreator: c2cRatingAgg[0]?.avg ? Number(c2cRatingAgg[0].avg.toFixed(1)) : 0,
+          avgCreatorToCompany: cr2cRatingAgg[0]?.avg ? Number(cr2cRatingAgg[0].avg.toFixed(1)) : 0
         },
 
         // Dedicated Real Subscription Analytics
@@ -276,12 +246,12 @@ router.get('/overview', async (req, res) => {
           }))
         },
 
-        // Revenue Breakdown
+        // Revenue Breakdown by actual streams
         revenueStreams: [
+          { name: 'Creator Onboarding', amount: onboardingRevenue, color: '#8b5cf6', percent: grossRevenue > 0 ? Math.round((onboardingRevenue / grossRevenue) * 100) : 0 },
           { name: 'Bookings Volume', amount: bookingRevenue, color: '#3b82f6', percent: grossRevenue > 0 ? Math.round((bookingRevenue / grossRevenue) * 100) : 0 },
-          { name: 'Subscriptions', amount: subscriptionRevenue, color: '#8b5cf6', percent: grossRevenue > 0 ? Math.round((subscriptionRevenue / grossRevenue) * 100) : 0 },
-          { name: 'Profile Boosts', amount: boostRevenue, color: '#f43f5e', percent: grossRevenue > 0 ? Math.round((boostRevenue / grossRevenue) * 100) : 0 },
-          { name: 'Platform Wallet Credits', amount: walletCredits, color: '#10b981', percent: grossRevenue > 0 ? Math.round((walletCredits / grossRevenue) * 100) : 0 }
+          { name: 'Subscriptions', amount: subscriptionRevenue, color: '#ec4899', percent: grossRevenue > 0 ? Math.round((subscriptionRevenue / grossRevenue) * 100) : 0 },
+          { name: 'Profile Boosts', amount: boostRevenue, color: '#f59e0b', percent: grossRevenue > 0 ? Math.round((boostRevenue / grossRevenue) * 100) : 0 }
         ],
 
         // Talent Pool Categories
@@ -299,7 +269,7 @@ router.get('/overview', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Analytics overview error:', err);
+    logger.error('Analytics overview error:', err);
     res.status(500).json({ success: false, message: 'Server Error', error: err.message });
   }
 });
