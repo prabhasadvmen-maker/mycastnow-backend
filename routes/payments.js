@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { requireCreator, requireAdmin } from '../middleware/auth.js';
 import Creator from '../models/Creator.js';
 import Payment from '../models/Payment.js';
+import SystemSettings from '../models/SystemSettings.js';
 import logger from '../config/logger.js';
 
 const router = express.Router();
@@ -13,7 +14,25 @@ const razorpay = new Razorpay({
   key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
-const ONBOARDING_FEE = Number(process.env.CREATOR_ONBOARDING_FEE) || 499;
+// Helper: fetch dynamic onboarding fee configuration from Superadmin SystemSettings
+export async function getDynamicOnboardingFeeConfig() {
+  try {
+    const settings = await SystemSettings.findOne();
+    if (settings) {
+      const isEnabled = settings.creatorOnboardingFeeEnabled !== false;
+      const fee = isEnabled ? (typeof settings.creatorOnboardingFee === 'number' ? settings.creatorOnboardingFee : 99) : 0;
+      return {
+        fee,
+        isFree: fee === 0 || !isEnabled,
+        enabled: isEnabled
+      };
+    }
+  } catch (err) {
+    logger.error('Error fetching dynamic onboarding fee:', err);
+  }
+  const defaultFee = Number(process.env.CREATOR_ONBOARDING_FEE) || 99;
+  return { fee: defaultFee, isFree: defaultFee === 0, enabled: true };
+}
 
 // Helper: sync any legacy creator onboarding payments to Payment collection
 export async function syncLegacyPayments() {
@@ -24,6 +43,9 @@ export async function syncLegacyPayments() {
         { onboardingPaymentId: { $exists: true, $ne: null, $ne: '' } }
       ]
     });
+
+    const feeConfig = await getDynamicOnboardingFeeConfig();
+    const fallbackFee = feeConfig.fee || Number(process.env.CREATOR_ONBOARDING_FEE) || 99;
 
     for (const c of paidCreators) {
       const paymentId = c.onboardingPaymentId || `legacy_pay_${c._id}`;
@@ -54,7 +76,7 @@ export async function syncLegacyPayments() {
             },
             phone: creatorPhone,
             email: creatorEmail,
-            amount: ONBOARDING_FEE,
+            amount: fallbackFee,
             currency: 'INR',
             paymentType: 'onboarding_fee',
             orderId: orderId,
@@ -75,9 +97,15 @@ export async function syncLegacyPayments() {
   }
 }
 
-// GET /api/payments/razorpay-key (public - frontend needs key_id only)
-router.get('/razorpay-key', (req, res) => {
-  res.json({ key: process.env.RAZORPAY_KEY_ID });
+// GET /api/payments/razorpay-key (public - frontend needs key_id and current fee config)
+router.get('/razorpay-key', async (req, res) => {
+  const feeConfig = await getDynamicOnboardingFeeConfig();
+  res.json({
+    key: process.env.RAZORPAY_KEY_ID,
+    fee: feeConfig.fee,
+    isFree: feeConfig.isFree,
+    enabled: feeConfig.enabled
+  });
 });
 
 // POST /api/payments/create-onboarding-order
@@ -90,8 +118,22 @@ router.post('/create-onboarding-order', requireCreator, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Onboarding fee already paid' });
     }
 
+    const feeConfig = await getDynamicOnboardingFeeConfig();
+
+    // If configured as FREE
+    if (feeConfig.isFree || feeConfig.fee === 0) {
+      return res.json({
+        success: true,
+        isFree: true,
+        amount: 0,
+        currency: 'INR',
+        creatorName: creator.basicDetails?.fullName || '',
+        creatorPhone: creator.phone
+      });
+    }
+
     const order = await razorpay.orders.create({
-      amount: ONBOARDING_FEE * 100, // paise
+      amount: feeConfig.fee * 100, // paise
       currency: 'INR',
       receipt: `onboard_${creator._id}_${Date.now()}`,
       notes: { creatorId: creator._id.toString(), type: 'onboarding_fee' }
@@ -99,6 +141,7 @@ router.post('/create-onboarding-order', requireCreator, async (req, res) => {
 
     res.json({
       success: true,
+      isFree: false,
       orderId: order.id,
       amount: order.amount,
       currency: order.currency,
@@ -114,8 +157,67 @@ router.post('/create-onboarding-order', requireCreator, async (req, res) => {
 // POST /api/payments/verify-onboarding
 router.post('/verify-onboarding', requireCreator, async (req, res) => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature, isFree } = req.body;
+    const feeConfig = await getDynamicOnboardingFeeConfig();
 
+    const creator = await Creator.findById(req.user.id);
+    if (!creator) {
+      return res.status(404).json({ success: false, message: 'Creator not found' });
+    }
+
+    const paidAt = new Date();
+
+    // Free onboarding flow
+    if (isFree || feeConfig.isFree || feeConfig.fee === 0) {
+      const freePaymentId = `free_${creator._id}_${Date.now()}`;
+      const freeOrderId = `free_order_${creator._id}`;
+
+      creator.onboardingFeePaid = true;
+      creator.onboardingPaymentId = freePaymentId;
+      creator.onboardingOrderId = freeOrderId;
+      creator.onboardingPaidAt = paidAt;
+      await creator.save();
+
+      const creatorName = creator.basicDetails?.fullName || 'Creator';
+      const creatorPhone = creator.phone || '';
+      const creatorEmail = creator.email || '';
+      const profilePhoto = creator.basicDetails?.profilePhoto || '';
+
+      await Payment.findOneAndUpdate(
+        { paymentId: freePaymentId },
+        {
+          $set: {
+            creatorId: creator._id,
+            creatorName,
+            creatorPhone,
+            creatorEmail,
+            profilePhoto,
+            basicDetails: {
+              fullName: creatorName,
+              profilePhoto
+            },
+            phone: creatorPhone,
+            email: creatorEmail,
+            amount: 0,
+            currency: 'INR',
+            paymentType: 'onboarding_fee',
+            orderId: freeOrderId,
+            paymentId: freePaymentId,
+            onboardingPaymentId: freePaymentId,
+            onboardingOrderId: freeOrderId,
+            onboardingPaidAt: paidAt,
+            status: 'paid',
+            paidAt,
+            isCreatorDeleted: false
+          }
+        },
+        { upsert: true, new: true }
+      );
+
+      return res.json({ success: true, isFree: true, message: 'Profile activated for free!' });
+    }
+
+    // Razorpay signature verification
     const expectedSignature = crypto
       .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
       .update(`${razorpay_order_id}|${razorpay_payment_id}`)
@@ -124,13 +226,6 @@ router.post('/verify-onboarding', requireCreator, async (req, res) => {
     if (expectedSignature !== razorpay_signature) {
       return res.status(400).json({ success: false, message: 'Payment verification failed' });
     }
-
-    const creator = await Creator.findById(req.user.id);
-    if (!creator) {
-      return res.status(404).json({ success: false, message: 'Creator not found' });
-    }
-
-    const paidAt = new Date();
 
     // 1. Update Creator document
     creator.onboardingFeePaid = true;
@@ -160,7 +255,7 @@ router.post('/verify-onboarding', requireCreator, async (req, res) => {
           },
           phone: creatorPhone,
           email: creatorEmail,
-          amount: ONBOARDING_FEE,
+          amount: feeConfig.fee,
           currency: 'INR',
           paymentType: 'onboarding_fee',
           orderId: razorpay_order_id,
@@ -170,7 +265,7 @@ router.post('/verify-onboarding', requireCreator, async (req, res) => {
           onboardingOrderId: razorpay_order_id,
           onboardingPaidAt: paidAt,
           status: 'paid',
-          paidAt: paidAt,
+          paidAt,
           isCreatorDeleted: false
         }
       },
@@ -238,14 +333,15 @@ router.get('/admin/all', requireAdmin, async (req, res) => {
       ])
     ]);
 
-    const totalRevenue = revenueAgg[0]?.totalRevenue || (total * ONBOARDING_FEE);
+    const feeConfig = await getDynamicOnboardingFeeConfig();
+    const totalRevenue = revenueAgg[0]?.totalRevenue || (total * feeConfig.fee);
 
     res.json({
       success: true,
       payments,
       total,
       totalRevenue,
-      fee: ONBOARDING_FEE
+      fee: feeConfig.fee
     });
   } catch (err) {
     logger.error('Admin payments fetch error:', err);

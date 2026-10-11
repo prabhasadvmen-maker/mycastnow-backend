@@ -30,6 +30,15 @@ const systemSettingsSchema = new mongoose.Schema({
     default: 500,
     min: 0
   },
+  creatorOnboardingFee: {
+    type: Number,
+    default: 99,
+    min: 0
+  },
+  creatorOnboardingFeeEnabled: {
+    type: Boolean,
+    default: true
+  },
   currency: {
     type: String,
     default: 'INR'

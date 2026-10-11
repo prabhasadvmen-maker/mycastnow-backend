@@ -13,6 +13,10 @@ router.get('/', async (req, res) => {
       if (!doc.isProfileComplete && doc.status !== 'approved' && doc.status !== 'rejected') {
         doc.status = 'incomplete';
       }
+      if (!doc.basicDetails) doc.basicDetails = {};
+      if (!doc.basicDetails.profilePhoto || doc.basicDetails.profilePhoto.startsWith('blob:')) {
+        doc.basicDetails.profilePhoto = doc.portfolio?.photos?.[0] || '';
+      }
       return doc;
     });
     res.json(formatted);
@@ -30,6 +34,10 @@ router.get('/:id', async (req, res) => {
     const doc = creator.toObject();
     if (!doc.isProfileComplete && doc.status !== 'approved' && doc.status !== 'rejected') {
       doc.status = 'incomplete';
+    }
+    if (!doc.basicDetails) doc.basicDetails = {};
+    if (!doc.basicDetails.profilePhoto || doc.basicDetails.profilePhoto.startsWith('blob:')) {
+      doc.basicDetails.profilePhoto = doc.portfolio?.photos?.[0] || '';
     }
     res.json(doc);
   } catch (error) {

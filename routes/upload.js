@@ -16,7 +16,7 @@ const useR2 = Boolean(
 );
 
 const ALLOWED_MIME_TYPES = [
-  'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif',
   'video/mp4', 'video/quicktime', 'video/webm',
   'application/pdf'
 ];

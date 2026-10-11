@@ -17,6 +17,8 @@ const getOrCreateSettings = async () => {
       platformCommissionPercent: 10,
       boostCommissionPercent: 15,
       minWithdrawalAmount: 500,
+      creatorOnboardingFee: Number(process.env.CREATOR_ONBOARDING_FEE) || 99,
+      creatorOnboardingFeeEnabled: true,
       currency: 'INR',
       maintenanceMode: false,
       allowNewRegistrations: true,
@@ -49,7 +51,8 @@ router.put('/', async (req, res) => {
     const allowedFields = [
       'platformName', 'supportEmail', 'supportPhone', 
       'platformCommissionPercent', 'boostCommissionPercent', 
-      'minWithdrawalAmount', 'currency', 'maintenanceMode', 
+      'minWithdrawalAmount', 'creatorOnboardingFee', 'creatorOnboardingFeeEnabled',
+      'currency', 'maintenanceMode', 
       'allowNewRegistrations', 'autoApproveCreators', 
       'autoApproveCastings', 'emailNotifications', 
       'smsNotifications', 'systemNotice'

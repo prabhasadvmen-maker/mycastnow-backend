@@ -226,7 +226,12 @@ router.get('/me', verifyToken, async (req, res) => {
   try {
     const creator = await Creator.findById(req.user.id).select('-password');
     if (!creator) return res.status(404).json({ message: 'Creator not found' });
-    res.json(creator);
+    const creatorObj = creator.toObject();
+    if (!creatorObj.basicDetails) creatorObj.basicDetails = {};
+    if (!creatorObj.basicDetails.profilePhoto || creatorObj.basicDetails.profilePhoto.startsWith('blob:')) {
+      creatorObj.basicDetails.profilePhoto = creatorObj.portfolio?.photos?.[0] || '';
+    }
+    res.json({ success: true, creator: creatorObj });
   } catch (error) {
     logger.error('Fetch creator me error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -278,7 +283,26 @@ const handleUpdateProfile = async (req, res) => {
       if (!mergedBasic.dob || mergedBasic.dob === '') {
         delete mergedBasic.dob;
       }
+      // Never store blob URLs
+      if (typeof mergedBasic.profilePhoto === 'string' && mergedBasic.profilePhoto.startsWith('blob:')) {
+        mergedBasic.profilePhoto = (existingBasic.profilePhoto && !existingBasic.profilePhoto.startsWith('blob:'))
+          ? existingBasic.profilePhoto
+          : (creator.portfolio?.photos?.[0] || '');
+      } else if (!mergedBasic.profilePhoto && creator.portfolio?.photos?.[0]) {
+        mergedBasic.profilePhoto = creator.portfolio.photos[0];
+      }
       updates.basicDetails = mergedBasic;
+    }
+
+    // Auto-populate profilePhoto from portfolio photos if empty
+    if (updates.portfolio?.photos?.length > 0) {
+      const curPhoto = updates.basicDetails?.profilePhoto || creator.basicDetails?.profilePhoto;
+      if (!curPhoto || curPhoto.startsWith('blob:')) {
+        if (!updates.basicDetails) {
+          updates.basicDetails = { ...(creator.basicDetails ? creator.basicDetails.toObject() : {}) };
+        }
+        updates.basicDetails.profilePhoto = updates.portfolio.photos[0];
+      }
     }
 
     // Merge & Sanitize professionalDetails
@@ -338,7 +362,13 @@ const handleUpdateProfile = async (req, res) => {
       { returnDocument: 'after', runValidators: true }
     ).select('-password');
 
-    res.json({ success: true, creator: updatedCreator });
+    const creatorObj = updatedCreator ? updatedCreator.toObject() : {};
+    if (!creatorObj.basicDetails) creatorObj.basicDetails = {};
+    if (!creatorObj.basicDetails.profilePhoto || creatorObj.basicDetails.profilePhoto.startsWith('blob:')) {
+      creatorObj.basicDetails.profilePhoto = creatorObj.portfolio?.photos?.[0] || '';
+    }
+
+    res.json({ success: true, creator: creatorObj });
   } catch (error) {
     if (error.code === 11000 && error.keyPattern && error.keyPattern.email) {
       return res.status(400).json({ success: false, message: 'This email is already in use by another account.' });
@@ -375,7 +405,7 @@ router.put('/change-password', verifyToken, async (req, res) => {
     const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    await Creator.findByIdAndUpdate(req.user.id, { $set: { password: hashedPassword } });
+    await Creator.findByIdAndUpdate(req.user.id, { $set: { password: hashedPassword } }, { returnDocument: 'after' });
 
     res.json({ success: true, message: 'Password updated successfully!' });
   } catch (error) {
