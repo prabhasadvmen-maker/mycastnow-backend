@@ -56,6 +56,9 @@ export async function syncLegacyPayments() {
       const creatorEmail = c.email || '';
       const profilePhoto = c.basicDetails?.profilePhoto || '';
 
+      const isFree = (paymentId && paymentId.startsWith('free_')) || (orderId && orderId.startsWith('free_'));
+      const recordAmount = isFree ? 0 : fallbackFee;
+
       await Payment.findOneAndUpdate(
         {
           $or: [
@@ -76,7 +79,7 @@ export async function syncLegacyPayments() {
             },
             phone: creatorPhone,
             email: creatorEmail,
-            amount: fallbackFee,
+            amount: recordAmount,
             currency: 'INR',
             paymentType: 'onboarding_fee',
             orderId: orderId,
@@ -320,7 +323,7 @@ router.get('/admin/all', requireAdmin, async (req, res) => {
       ];
     }
 
-    const [payments, total, revenueAgg] = await Promise.all([
+    const [payments, total, statsAgg] = await Promise.all([
       Payment.find(query)
         .sort({ paidAt: -1, createdAt: -1 })
         .skip(skip)
@@ -329,18 +332,34 @@ router.get('/admin/all', requireAdmin, async (req, res) => {
       Payment.countDocuments(query),
       Payment.aggregate([
         { $match: { status: 'paid' } },
-        { $group: { _id: null, totalRevenue: { $sum: '$amount' } } }
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: '$amount' },
+            paidCount: {
+              $sum: { $cond: [{ $gt: ['$amount', 0] }, 1, 0] }
+            },
+            freeCount: {
+              $sum: { $cond: [{ $lte: ['$amount', 0] }, 1, 0] }
+            }
+          }
+        }
       ])
     ]);
 
     const feeConfig = await getDynamicOnboardingFeeConfig();
-    const totalRevenue = revenueAgg[0]?.totalRevenue || (total * feeConfig.fee);
+    const statsData = statsAgg[0] || {};
+    const totalRevenue = typeof statsData.totalRevenue === 'number' ? statsData.totalRevenue : 0;
+    const paidCount = typeof statsData.paidCount === 'number' ? statsData.paidCount : 0;
+    const freeCount = typeof statsData.freeCount === 'number' ? statsData.freeCount : 0;
 
     res.json({
       success: true,
       payments,
       total,
       totalRevenue,
+      paidCount,
+      freeCount,
       fee: feeConfig.fee
     });
   } catch (err) {

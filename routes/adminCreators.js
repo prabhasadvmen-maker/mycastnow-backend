@@ -113,6 +113,9 @@ router.delete('/:id', async (req, res) => {
       const creatorEmail = creator.email || '';
       const profilePhoto = creator.basicDetails?.profilePhoto || '';
 
+      const isFree = (paymentId && paymentId.startsWith('free_')) || (orderId && orderId.startsWith('free_'));
+      const fallbackAmount = isFree ? 0 : ONBOARDING_FEE;
+
       await Payment.findOneAndUpdate(
         {
           $or: [
@@ -121,6 +124,18 @@ router.delete('/:id', async (req, res) => {
           ]
         },
         {
+          $setOnInsert: {
+            amount: fallbackAmount,
+            currency: 'INR',
+            paymentType: 'onboarding_fee',
+            orderId,
+            paymentId,
+            onboardingPaymentId: paymentId,
+            onboardingOrderId: orderId,
+            onboardingPaidAt: paidAt,
+            status: 'paid',
+            paidAt
+          },
           $set: {
             creatorId: creator._id,
             creatorName,
@@ -133,16 +148,6 @@ router.delete('/:id', async (req, res) => {
             },
             phone: creatorPhone,
             email: creatorEmail,
-            amount: ONBOARDING_FEE,
-            currency: 'INR',
-            paymentType: 'onboarding_fee',
-            orderId,
-            paymentId,
-            onboardingPaymentId: paymentId,
-            onboardingOrderId: orderId,
-            onboardingPaidAt: paidAt,
-            status: 'paid',
-            paidAt,
             isCreatorDeleted: true,
             deletedAt: new Date()
           }
