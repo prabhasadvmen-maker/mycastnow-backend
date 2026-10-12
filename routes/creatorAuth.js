@@ -154,28 +154,29 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
 //  2. POST /verify-otp — Verify OTP & issue JWT (with rate limiting)
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/verify-otp', authLimiter, async (req, res) => {
-  const { phone, otp } = req.body;
-
-  if (!phone || !otp) {
-    return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
-  }
-
-  const isTest = (phone === '9876543210' || phone === '9999999999') && otp.toString() === '123456';
-  if (!isTest) {
-    if (!record) return res.status(400).json({ success: false, message: 'OTP not found or expired. Please request a new OTP.' });
-    if (record.expiry !== Infinity && Date.now() > record.expiry) {
-      await deleteOTP(phone);
-      return res.status(400).json({ success: false, message: 'OTP expired. Please request a new one.' });
-    }
-    if (record.otp !== otp.toString()) {
-      return res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' });
-    }
-  }
-
-  // OTP verified — delete immediately (one-time use)
-  await deleteOTP(phone);
-
   try {
+    const { phone, otp } = req.body;
+
+    if (!phone || !otp) {
+      return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
+    }
+
+    const isTest = (phone === '9876543210' || phone === '9999999999') && otp.toString() === '123456';
+    if (!isTest) {
+      const record = await getOTP(phone);
+      if (!record) return res.status(400).json({ success: false, message: 'OTP not found or expired. Please request a new OTP.' });
+      if (record.expiry !== Infinity && Date.now() > record.expiry) {
+        await deleteOTP(phone);
+        return res.status(400).json({ success: false, message: 'OTP expired. Please request a new one.' });
+      }
+      if (record.otp !== otp.toString()) {
+        return res.status(400).json({ success: false, message: 'Invalid OTP. Please try again.' });
+      }
+    }
+
+    // OTP verified — delete immediately (one-time use)
+    await deleteOTP(phone);
+
     let creator = await Creator.findOne({ phone });
     let isNewUser = false;
 
