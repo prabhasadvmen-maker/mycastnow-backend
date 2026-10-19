@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import http from 'http';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -9,11 +10,12 @@ import hpp from 'hpp';
 import connectDB from './config/db.js';
 import seedSubscriptionPlans from './config/seed.js';
 import logger from './config/logger.js';
+import { initSocket } from './socket.js';
 import Creator from './models/Creator.js';
 import Company from './models/Company.js';
 import errorHandler from './middleware/errorHandler.js';
 import { requireAdmin } from './middleware/auth.js';
-import { apiLimiter, authLimiter, uploadLimiter } from './middleware/rateLimiter.js';
+import { apiLimiter, authLimiter } from './middleware/rateLimiter.js';
 
 import authRoutes from './routes/auth.js';
 import companyRoutes from './routes/company.js';
@@ -38,6 +40,7 @@ import companySubscriptionRoutes from './routes/companySubscription.js';
 import companyProfileRoutes from './routes/companyProfile.js';
 import creatorPortalRoutes from './routes/creatorPortal.js';
 import adminSettingsRoutes from './routes/adminSettings.js';
+import adminCouponsRoutes from './routes/adminCoupons.js';
 import publicLandingRoutes from './routes/publicLanding.js';
 import paymentsRoutes, { syncLegacyPayments } from './routes/payments.js';
 
@@ -134,7 +137,7 @@ app.use('/api/companyAuth', authLimiter, companyAuthRoutes);
 app.use('/api/creatorAuth', authLimiter, creatorAuthRoutes);
 
 // ── Upload Routes ─────────────────────────────────────────────────────────────
-app.use('/api/upload', uploadLimiter, uploadRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // ── Company Routes ─────────────────────────────────────────────────────────────
 app.use('/api/companies', companyRoutes);
@@ -167,6 +170,7 @@ app.use('/api/admin/reviews',       requireAdmin, adminReviewsRoutes);
 app.use('/api/admin/analytics',     requireAdmin, adminAnalyticsRoutes);
 app.use('/api/admin/users',         requireAdmin, adminUsersRoutes);
 app.use('/api/admin/settings',      requireAdmin, adminSettingsRoutes);
+app.use('/api/admin/coupons',       requireAdmin, adminCouponsRoutes);
 
 // ── Health Check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (req, res) => {
@@ -242,7 +246,9 @@ connectDB()
     }
   })
   .then(() => {
-    const server = app.listen(PORT, () => {
+    const server = http.createServer(app);
+    initSocket(server, allowedOrigins);
+    server.listen(PORT, () => {
       logger.info(`✅ Server running on port ${PORT} | ENV: ${process.env.NODE_ENV || 'development'}`);
 
       // Keep-alive: ping self every 30s to prevent Render free tier sleep

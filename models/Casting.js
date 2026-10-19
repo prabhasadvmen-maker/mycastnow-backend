@@ -107,6 +107,10 @@ const castingSchema = new mongoose.Schema({
     notes: {
       type: String,
       default: ''
+    },
+    showreelUrl: {
+      type: String,
+      default: ''
     }
   }]
 }, { timestamps: true });

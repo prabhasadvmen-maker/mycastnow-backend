@@ -26,25 +26,32 @@ export const authLimiter = rateLimit({
 });
 
 // ── OTP send — very strict (prevent SMS bombing)
+// Per-phone rate limiting: max 1 OTP per 5 minutes
 export const otpLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 10 minutes
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 1,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req, res) => req.body.phone || req.ip, // Rate limit by phone number
+  message: {
+    success: false,
+    message: 'You can only request one OTP every 5 minutes. Please wait before trying again.'
+  },
+  skip: (req, res) => {
+    // Skip rate limiting for test numbers
+    const testNumbers = ['9876543210', '9999999999'];
+    return testNumbers.includes(req.body.phone);
+  }
+});
+
+// ── Signup route limiter (prevent account creation spam)
+export const signupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
   max: 5,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
     success: false,
-    message: 'Too many OTP requests. Please wait 10 minutes before trying again.'
-  }
-});
-
-// ── Upload route limiter
-export const uploadLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 30,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    message: 'Too many upload requests. Please slow down.'
+    message: 'Too many signup attempts from this IP. Please try again after 1 hour.'
   }
 });

@@ -9,6 +9,7 @@ import WalletTransaction from '../models/WalletTransaction.js';
 import SubscriptionPlan from '../models/SubscriptionPlan.js';
 import UserSubscription from '../models/UserSubscription.js';
 import { verifyToken } from '../middleware/auth.js';
+import { emitToUser } from '../socket.js';
 
 const router = express.Router();
 
@@ -50,7 +51,8 @@ router.get('/overview', verifyToken, async (req, res) => {
         image: c.image,
         appliedAt: myApp?.appliedAt || c.updatedAt,
         status: myApp?.status || 'Applied',
-        notes: myApp?.notes || ''
+        notes: myApp?.notes || '',
+        showreelUrl: myApp?.showreelUrl || ''
       };
     }).sort((a, b) => new Date(b.appliedAt) - new Date(a.appliedAt)).slice(0, 5);
 
@@ -349,39 +351,81 @@ router.post('/castings/:id/apply', verifyToken, async (req, res) => {
     const creator = await Creator.findById(req.user.id);
     if (!creator) return res.status(404).json({ success: false, message: 'Creator profile not found' });
 
+    // Only approved, active creators can audition
+    if (!creator.isActive) {
+      return res.status(403).json({ success: false, message: 'Your account is disabled. Please contact support.' });
+    }
+    const isApprovedCreator = creator.status === 'approved' || (creator.isApproved === true && creator.status !== 'rejected');
+    if (!isApprovedCreator) {
+      const msg = creator.status === 'rejected'
+        ? 'Your profile was rejected. Please update it and contact support.'
+        : 'Your profile is awaiting admin approval. You can apply once it is approved.';
+      return res.status(403).json({ success: false, message: msg });
+    }
+
     const { id } = req.params;
-    const { notes } = req.body;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid casting id' });
+    }
+
+    const notes = String(req.body.notes || '').trim();
+    const showreelUrl = String(req.body.showreelUrl || '').trim();
+
+    if (notes.length < 10) {
+      return res.status(400).json({ success: false, message: 'Please write a short pitch (at least 10 characters).' });
+    }
+    if (notes.length > 1000) {
+      return res.status(400).json({ success: false, message: 'Pitch is too long (max 1000 characters).' });
+    }
+    if (showreelUrl) {
+      let valid = false;
+      try { valid = ['http:', 'https:'].includes(new URL(showreelUrl).protocol); } catch { valid = false; }
+      if (!valid || showreelUrl.length > 500) {
+        return res.status(400).json({ success: false, message: 'Please enter a valid showreel link (http/https).' });
+      }
+    }
 
     const casting = await Casting.findById(id);
     if (!casting) return res.status(404).json({ success: false, message: 'Casting call not found' });
 
-    // Check if casting is open
-    if (casting.status === 'Closed' || casting.status === 'Archived') {
+    // Only live castings accept applications
+    if (!['Open', 'In Review'].includes(casting.status)) {
       return res.status(400).json({ success: false, message: 'This casting call is no longer accepting applications' });
     }
+    if (casting.deadline && new Date(casting.deadline) < new Date()) {
+      return res.status(400).json({ success: false, message: 'The application deadline for this casting has passed' });
+    }
 
-    // Check if already applied
-    const alreadyApplied = casting.applicants?.some(a => a.creator?.toString() === creator._id.toString());
-    if (alreadyApplied) {
+    // Atomic push — guards against double-submit / race conditions
+    const updated = await Casting.findOneAndUpdate(
+      { _id: id, 'applicants.creator': { $ne: creator._id } },
+      {
+        $push: {
+          applicants: {
+            creator: creator._id,
+            appliedAt: new Date(),
+            status: 'Applied',
+            notes,
+            showreelUrl
+          }
+        }
+      },
+      { returnDocument: 'after' }
+    );
+
+    if (!updated) {
       return res.status(400).json({ success: false, message: 'You have already applied to this casting call' });
     }
 
-    // Push new applicant
-    casting.applicants.push({
-      creator: creator._id,
-      appliedAt: new Date(),
-      status: 'Applied',
-      notes: notes || ''
-    });
-
-    casting.applicantsCount = casting.applicants.length;
-    await casting.save();
+    updated.applicantsCount = updated.applicants.length;
+    await updated.save();
 
     res.json({
       success: true,
       message: 'Application submitted successfully! The casting director will review your profile.',
-      castingId: casting._id,
-      applicationStatus: 'Applied'
+      castingId: updated._id,
+      applicationStatus: 'Applied',
+      applicantsCount: updated.applicantsCount
     });
   } catch (error) {
     console.error('Error applying to casting:', error);
@@ -587,6 +631,7 @@ router.get('/messages/thread/:companyId', verifyToken, async (req, res) => {
       { creator: new mongoose.Types.ObjectId(creatorId), company: cId, senderType: 'Company', read: false },
       { $set: { read: true } }
     );
+    emitToUser('company', cId, 'messages:read', { role: 'creator', id: creatorId });
 
     const company = await Company.findById(companyId).select('name logo city email phone website');
 
@@ -608,8 +653,17 @@ router.post('/messages/send', verifyToken, async (req, res) => {
   try {
     const creatorId = req.user.id;
     const { companyId, text, projectReference } = req.body;
-    if (!companyId || !text?.trim()) {
+    if (req.user.role !== 'creator') {
+      return res.status(403).json({ success: false, message: 'Only creators can send messages from this inbox' });
+    }
+    if (!companyId || !mongoose.Types.ObjectId.isValid(companyId) || !text?.trim()) {
       return res.status(400).json({ success: false, message: 'companyId and text are required' });
+    }
+    if (text.trim().length > 2000) {
+      return res.status(400).json({ success: false, message: 'Message is too long (max 2000 characters)' });
+    }
+    if (!(await Company.exists({ _id: companyId }))) {
+      return res.status(404).json({ success: false, message: 'Company not found' });
     }
 
     const msg = new Message({
@@ -622,6 +676,10 @@ router.post('/messages/send', verifyToken, async (req, res) => {
     });
 
     await msg.save();
+
+    // Real-time delivery to the company (and the sender's other tabs)
+    emitToUser('company', companyId, 'message:new', msg);
+    emitToUser('creator', creatorId, 'message:new', msg);
 
     res.status(201).json({
       success: true,

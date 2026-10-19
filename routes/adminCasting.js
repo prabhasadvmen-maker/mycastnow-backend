@@ -42,6 +42,68 @@ router.get('/pending', async (req, res) => {
   }
 });
 
+// GET all creator applications across every casting (flattened, newest first)
+router.get('/applications', async (req, res) => {
+  try {
+    const castings = await Casting.find({ 'applicants.0': { $exists: true } })
+      .populate('applicants.creator', 'basicDetails professionalDetails phone email status isActive')
+      .populate('company', 'name logo')
+      .populate('companyId', 'name logo')
+      .lean();
+
+    const applications = [];
+    castings.forEach(c => {
+      (c.applicants || []).forEach(a => {
+        applications.push({
+          _id: a._id,
+          castingId: c._id,
+          castingTitle: c.title,
+          projectType: c.projectType,
+          roleType: c.roleType,
+          location: c.location,
+          budget: c.budget,
+          castingStatus: c.status,
+          companyName: c.company?.name || c.companyId?.name || 'MyCastNow (Admin)',
+          creator: a.creator || null,
+          status: a.status || 'Applied',
+          notes: a.notes || '',
+          showreelUrl: a.showreelUrl || '',
+          appliedAt: a.appliedAt || c.createdAt
+        });
+      });
+    });
+
+    applications.sort((x, y) => new Date(y.appliedAt) - new Date(x.appliedAt));
+    res.json({ success: true, count: applications.length, applications });
+  } catch (error) {
+    console.error('Error fetching casting applications:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+});
+
+// PUT update an applicant's status on a casting
+router.put('/:id/applicant/status', async (req, res) => {
+  try {
+    const { creatorId, status } = req.body;
+    const allowed = ['Applied', 'Shortlisted', 'Audition Scheduled', 'Selected', 'Rejected'];
+    if (!creatorId || !allowed.includes(status)) {
+      return res.status(400).json({ message: 'Valid creatorId and status are required' });
+    }
+    const casting = await Casting.findById(req.params.id);
+    if (!casting) return res.status(404).json({ message: 'Casting call not found' });
+
+    const applicant = casting.applicants.find(a => a.creator?.toString() === String(creatorId));
+    if (!applicant) return res.status(404).json({ message: 'Applicant not found in this casting' });
+
+    applicant.status = status;
+    await casting.save();
+    res.json({ success: true, status });
+  } catch (error) {
+    console.error('Error updating applicant status:', error);
+    res.status(500).json({ message: 'Server Error', error: error.message });
+  }
+});
+
 // GET single casting call by ID
 router.get('/:id', async (req, res) => {
   try {

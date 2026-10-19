@@ -30,6 +30,7 @@
     "multer": "^2.4.0",
     "multer-s3": "^3.0.1",
     "razorpay": "^2.9.8",
+    "socket.io": "^4.8.4",
     "winston": "^3.19.0"
   }
 }

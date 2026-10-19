@@ -24,6 +24,8 @@ const paymentSchema = new mongoose.Schema(
 
     // Financial transaction details
     amount: { type: Number, required: true },
+    couponCode: { type: String, default: '' },
+    discountAmount: { type: Number, default: 0 },
     currency: { type: String, default: 'INR' },
     paymentType: {
       type: String,

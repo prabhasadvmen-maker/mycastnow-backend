@@ -4,6 +4,7 @@ import Message from '../models/Message.js';
 import Creator from '../models/Creator.js';
 import Company from '../models/Company.js';
 import { verifyToken } from '../middleware/auth.js';
+import { emitToUser } from '../socket.js';
 
 const router = express.Router();
 
@@ -87,6 +88,7 @@ router.get('/thread/:creatorId', verifyToken, async (req, res) => {
       { company: cId, creator: crId, senderType: 'Creator', read: false },
       { $set: { read: true } }
     );
+    emitToUser('creator', crId, 'messages:read', { role: 'company', id: companyId });
 
     res.json({
       success: true,
@@ -108,8 +110,17 @@ router.post('/send', verifyToken, async (req, res) => {
     const companyId = req.user.id;
     const { creatorId, text, projectReference, attachment } = req.body;
 
-    if (!creatorId || !text || !text.trim()) {
+    if (req.user.role !== 'company') {
+      return res.status(403).json({ success: false, message: 'Only companies can send messages from this inbox' });
+    }
+    if (!creatorId || !mongoose.Types.ObjectId.isValid(creatorId) || !text || !text.trim()) {
       return res.status(400).json({ success: false, message: 'creatorId and message text are required' });
+    }
+    if (text.trim().length > 2000) {
+      return res.status(400).json({ success: false, message: 'Message is too long (max 2000 characters)' });
+    }
+    if (!(await Creator.exists({ _id: creatorId }))) {
+      return res.status(404).json({ success: false, message: 'Creator not found' });
     }
 
     const cId = new mongoose.Types.ObjectId(companyId);
@@ -126,6 +137,10 @@ router.post('/send', verifyToken, async (req, res) => {
     });
 
     const saved = await message.save();
+
+    // Real-time delivery to the creator (and the sender's other tabs)
+    emitToUser('creator', crId, 'message:new', saved);
+    emitToUser('company', cId, 'message:new', saved);
 
     res.status(201).json({
       success: true,
