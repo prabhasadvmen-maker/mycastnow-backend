@@ -65,14 +65,31 @@ setInterval(() => {
 }, 10 * 60 * 1000);
 
 // ──────────────────────────────────────────────────────────────────────────────
+//  Phone normalisation (India-first, international supported)
+//  - India (no countryCode, or "91"): exactly 10 digits, stored as-is (legacy format)
+//  - Other countries: stored as "+<countryCode><number>" so they never collide with Indian numbers
+// ──────────────────────────────────────────────────────────────────────────────
+const resolvePhone = (body = {}) => {
+  const phone = String(body.phone ?? '').trim();
+  const cc = String(body.countryCode ?? '91').replace(/\D/g, '') || '91';
+
+  if (cc === '91') {
+    if (!/^\d{10}$/.test(phone)) return { error: 'Invalid phone number. Must be exactly 10 digits.' };
+    return { key: phone, mobile: phone, country: '91' };
+  }
+  if (!/^\d{1,4}$/.test(cc) || !/^\d{4,14}$/.test(phone) || cc.length + phone.length > 15) {
+    return { error: 'Invalid phone number for the selected country.' };
+  }
+  return { key: `+${cc}${phone}`, mobile: phone, country: cc };
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
 //  1. POST /send-otp — Generate & send OTP
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/send-otp', otpLimiter, async (req, res) => {
-  const { phone } = req.body;
-
-  if (!phone || !/^\d{10}$/.test(phone)) {
-    return res.status(400).json({ success: false, message: 'Invalid phone number. Must be exactly 10 digits.' });
-  }
+  const parsed = resolvePhone(req.body);
+  if (parsed.error) return res.status(400).json({ success: false, message: parsed.error });
+  const phone = parsed.key;
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -84,10 +101,10 @@ router.post('/send-otp', otpLimiter, async (req, res) => {
     try {
       const response = await axios.post('https://apitxt.com/api/sendOTP', new URLSearchParams({
         authkey: process.env.APITXT_API_KEY,
-        mobile: phone,
+        mobile: parsed.mobile,
         otp,
         channel: 'sms',
-        country: '91',
+        country: parsed.country,
       }));
       if (response.data.status !== 'success' && response.data.status !== 200) {
         logger.warn(`APITxT warning for ${phone}:`, response.data);
@@ -113,11 +130,9 @@ router.post('/send-otp', otpLimiter, async (req, res) => {
 //  1.5 POST /resend-otp — Resend OTP
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/resend-otp', otpLimiter, async (req, res) => {
-  const { phone } = req.body;
-
-  if (!phone || !/^\d{10}$/.test(phone)) {
-    return res.status(400).json({ success: false, message: 'Invalid phone number. Must be exactly 10 digits.' });
-  }
+  const parsed = resolvePhone(req.body);
+  if (parsed.error) return res.status(400).json({ success: false, message: parsed.error });
+  const phone = parsed.key;
 
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
 
@@ -125,10 +140,10 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
     try {
       const response = await axios.post('https://apitxt.com/api/sendOTP', new URLSearchParams({
         authkey: process.env.APITXT_API_KEY,
-        mobile: phone,
+        mobile: parsed.mobile,
         otp,
         channel: 'sms',
-        country: '91',
+        country: parsed.country,
       }));
       if (response.data.status !== 'success' && response.data.status !== 200) {
         logger.warn(`APITxT warning for ${phone}:`, response.data);
@@ -155,11 +170,13 @@ router.post('/resend-otp', otpLimiter, async (req, res) => {
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/verify-otp', authLimiter, async (req, res) => {
   try {
-    const { phone, otp } = req.body;
+    const { otp } = req.body;
+    const parsed = resolvePhone(req.body);
 
-    if (!phone || !otp) {
-      return res.status(400).json({ success: false, message: 'Phone and OTP are required' });
+    if (parsed.error || !otp) {
+      return res.status(400).json({ success: false, message: parsed.error || 'Phone and OTP are required' });
     }
+    const phone = parsed.key;
 
     const isTest = (phone === '9876543210' || phone === '9999999999') && otp.toString() === '123456';
     if (!isTest) {
