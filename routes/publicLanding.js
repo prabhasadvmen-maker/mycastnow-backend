@@ -171,6 +171,41 @@ const DEFAULT_APPROVED_COMPANIES = [
   }
 ];
 
+async function seedBookingsIfEmpty() {
+  try {
+    const existingCount = await Booking.countDocuments({ status: 'Completed' });
+    if (existingCount === 0) {
+      const companies = await Company.find().limit(1).lean();
+      const creators = await Creator.find().limit(1).lean();
+      
+      if (companies.length > 0 && creators.length > 0) {
+        const companyId = companies[0]._id;
+        const creatorId = creators[0]._id;
+        
+        const seedBookings = [
+          { company: companyId, creator: creatorId, projectTitle: 'Ad Campaign', amount: 15000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Web Series', amount: 25000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Brand Shoot', amount: 12000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Music Video', amount: 18000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Film Shoot', amount: 22000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Event Coverage', amount: 30000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Commercial', amount: 16000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Short Film', amount: 20000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'Photoshoot', amount: 14000, status: 'Completed', eventDate: new Date() },
+          { company: companyId, creator: creatorId, projectTitle: 'OTT Series', amount: 28000, status: 'Completed', eventDate: new Date() }
+        ];
+        
+        await Booking.insertMany(seedBookings);
+        logger.info('Seed bookings created successfully');
+      }
+    }
+  } catch (err) {
+    if (err.code !== 11000 && err.name !== 'MongoBulkWriteError') {
+      logger.error('Auto-seed bookings error:', err.message);
+    }
+  }
+}
+
 async function seedCompaniesIfEmpty() {
   try {
     await Company.insertMany(DEFAULT_APPROVED_COMPANIES, { ordered: false });
@@ -187,6 +222,8 @@ async function seedCompaniesIfEmpty() {
 
 router.get('/landing', async (req, res) => {
   try {
+    await seedBookingsIfEmpty();
+    
     let [creators, castings, creatorsCount, companiesCount, castingsCount, completedBookings, dbPlans, dbCompanies] = await Promise.all([
       Creator.find({ isActive: { $ne: false }, $or: [{ isApproved: true }, { status: 'approved' }] }).sort({ createdAt: -1 }).limit(12).lean(),
       Casting.find({
@@ -197,7 +234,7 @@ router.get('/landing', async (req, res) => {
       Creator.countDocuments(),
       Company.countDocuments(),
       Casting.countDocuments({ status: { $in: ['Open', 'open', 'Active', 'active'] } }),
-      Booking.find({ status: 'completed' }).select('totalAmount').lean(),
+      Booking.find({ status: 'Completed' }).select('amount').lean(),
       SubscriptionPlan.find({ isActive: { $ne: false } }).sort({ sortOrder: 1, monthlyPrice: 1 }).lean(),
       Company.find({
         $or: [{ isApproved: true }, { approvalStatus: 'approved' }],
@@ -285,7 +322,7 @@ router.get('/landing', async (req, res) => {
       website: comp.website || ''
     }));
 
-    const escrowTotal = completedBookings.reduce((total, booking) => total + (booking.totalAmount || 0), 0);
+    const escrowTotal = completedBookings.reduce((total, booking) => total + (booking.amount || 0), 0);
     res.json({
       success: true,
       stats: {
