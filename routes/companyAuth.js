@@ -5,6 +5,7 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import multer from 'multer';
 import path from 'path';
 import Company from '../models/Company.js';
+import CompanyPaymentHistory from '../models/CompanyPaymentHistory.js';
 import { verifyToken } from '../middleware/auth.js';
 import { authLimiter, signupLimiter } from '../middleware/rateLimiter.js';
 import logger from '../config/logger.js';
@@ -85,12 +86,13 @@ async function uploadLogo(file, req) {
 router.post('/signup', signupLimiter, upload.single('logo'), async (req, res) => {
   try {
     const { name, email, password, industry, website, location } = req.body;
+    logger.info('Company signup - Payment data received:', { paymentId: req.body.paymentId, orderId: req.body.orderId, registrationFee: req.body.registrationFee });
 
     // Input validation
     if (!name || !name.trim()) {
       return res.status(400).json({ message: 'Company name is required' });
     }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       return res.status(400).json({ message: 'Valid email is required' });
     }
     if (!password || password.length < 8) {
@@ -109,6 +111,11 @@ router.post('/signup', signupLimiter, upload.single('logo'), async (req, res) =>
     // Upload logo to R2 / local
     const logoUrl = await uploadLogo(req.file, req);
 
+    // Extract payment data
+    const paymentId = req.body.paymentId?.trim() || null;
+    const orderId = req.body.orderId?.trim() || null;
+    const registrationFee = req.body.registrationFee ? Number(req.body.registrationFee) : 0;
+
     const newCompany = new Company({
       name: name.trim(),
       email: email.toLowerCase().trim(),
@@ -119,10 +126,30 @@ router.post('/signup', signupLimiter, upload.single('logo'), async (req, res) =>
       logo: logoUrl || '',
       isActive: true,
       isApproved: false,
-      approvalStatus: 'pending'
+      approvalStatus: 'pending',
+      registrationPaymentId: paymentId,
+      registrationOrderId: orderId,
+      registrationFee: registrationFee,
+      registrationPaidAt: paymentId ? new Date() : null
     });
 
     await newCompany.save();
+
+    // Save payment history if payment was made
+    if (paymentId) {
+      await CompanyPaymentHistory.create({
+        companyId: newCompany._id,
+        companyName: name.trim(),
+        email: email.toLowerCase().trim(),
+        registrationPaymentId: paymentId,
+        registrationOrderId: orderId,
+        registrationFee: registrationFee,
+        registrationPaidAt: new Date(),
+        couponCode: req.body.couponCode || null,
+        discountAmount: req.body.discountAmount ? Number(req.body.discountAmount) : 0,
+        status: 'completed'
+      });
+    }
 
     const companyResponse = newCompany.toObject();
     delete companyResponse.password;
@@ -234,7 +261,6 @@ router.post('/login', authLimiter, async (req, res) => {
 // ──────────────────────────────────────────────────────────────────────────────
 router.post('/admin-login/:id', verifyToken, async (req, res) => {
   try {
-    // BUG 5 FIX: use verifyToken middleware — req.user is already verified
     if (req.user.role !== 'admin' && req.user.role !== 'superadmin' && req.user.role !== 'Super Admin') {
       return res.status(403).json({ message: 'Forbidden: Admin access required' });
     }
@@ -280,7 +306,7 @@ router.get('/me', verifyToken, async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-//  PUT /change-password — Company password change (FIXED: was using undefined decoded)
+//  PUT /change-password — Company password change
 // ──────────────────────────────────────────────────────────────────────────────
 router.put('/change-password', verifyToken, async (req, res) => {
   try {
@@ -304,7 +330,6 @@ router.put('/change-password', verifyToken, async (req, res) => {
     const salt = await bcrypt.genSalt(12);
     const hashedPassword = await bcrypt.hash(newPassword, salt);
 
-    // FIXED: was using undefined 'decoded.id', now uses req.user.id from verifyToken
     await Company.findByIdAndUpdate(req.user.id, { $set: { password: hashedPassword } });
 
     res.json({ success: true, message: 'Password changed successfully' });

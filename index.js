@@ -42,6 +42,7 @@ import creatorPortalRoutes from './routes/creatorPortal.js';
 import adminSettingsRoutes from './routes/adminSettings.js';
 import adminCouponsRoutes from './routes/adminCoupons.js';
 import publicLandingRoutes from './routes/publicLanding.js';
+import publicCouponsRoutes from './routes/publicCoupons.js';
 import paymentsRoutes, { syncLegacyPayments } from './routes/payments.js';
 
 // ── Startup checks ───────────────────────────────────────────────────────────
@@ -131,6 +132,7 @@ app.use('/api', apiLimiter);
 //  PUBLIC ROUTES (no auth required)
 // ══════════════════════════════════════════════════════════════════════════════
 app.use('/api/public', publicLandingRoutes);
+app.use('/api/public/coupons', publicCouponsRoutes);
 
 // ── Auth Routes (rate limited) ────────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
@@ -171,6 +173,49 @@ app.use('/api/admin/reviews',       requireAdmin, adminReviewsRoutes);
 app.use('/api/admin/analytics',     requireAdmin, adminAnalyticsRoutes);
 app.use('/api/admin/users',         requireAdmin, adminUsersRoutes);
 app.use('/api/admin/settings',      requireAdmin, adminSettingsRoutes);
+
+// Public Fees Endpoint (no auth required)
+app.get('/api/public/fees', async (req, res) => {
+  try {
+    const SystemSettings = (await import('./models/SystemSettings.js')).default;
+    let settings = await SystemSettings.findOne();
+    if (!settings) {
+      settings = await SystemSettings.create({
+        platformName: 'MyCastNow',
+        supportEmail: 'support@mycastnow.com',
+        supportPhone: '+91 98765 43210',
+        platformCommissionPercent: 10,
+        boostCommissionPercent: 15,
+        minWithdrawalAmount: 500,
+        creatorOnboardingFee: Number(process.env.CREATOR_ONBOARDING_FEE) || 99,
+        creatorOnboardingFeeEnabled: true,
+        companyRegistrationFee: Number(process.env.COMPANY_REGISTRATION_FEE) || 199,
+        companyRegistrationFeeEnabled: true,
+        currency: 'INR',
+        maintenanceMode: false,
+        allowNewRegistrations: true,
+        autoApproveCreators: false,
+        autoApproveCastings: true,
+        emailNotifications: true,
+        smsNotifications: false,
+        systemNotice: 'Platform is running smoothly in production mode.'
+      });
+    }
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.json({
+      success: true,
+      fees: {
+        companyRegistrationFee: settings.companyRegistrationFee || 199,
+        creatorOnboardingFee: settings.creatorOnboardingFee || 99
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching fees:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch fees' });
+  }
+});
 app.use('/api/admin/coupons',       requireAdmin, adminCouponsRoutes);
 
 // ── Health Check ──────────────────────────────────────────────────────────────

@@ -39,6 +39,15 @@ const systemSettingsSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  companyRegistrationFee: {
+    type: Number,
+    default: 199,
+    min: 0
+  },
+  companyRegistrationFeeEnabled: {
+    type: Boolean,
+    default: true
+  },
   currency: {
     type: String,
     default: 'INR'

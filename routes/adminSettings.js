@@ -19,6 +19,8 @@ const getOrCreateSettings = async () => {
       minWithdrawalAmount: 500,
       creatorOnboardingFee: Number(process.env.CREATOR_ONBOARDING_FEE) || 99,
       creatorOnboardingFeeEnabled: true,
+      companyRegistrationFee: Number(process.env.COMPANY_REGISTRATION_FEE) || 199,
+      companyRegistrationFeeEnabled: true,
       currency: 'INR',
       maintenanceMode: false,
       allowNewRegistrations: true,
@@ -43,6 +45,27 @@ router.get('/', async (req, res) => {
   }
 });
 
+// GET Public Fees (no auth required) - for company signup
+router.get('/public/fees', async (req, res) => {
+  try {
+    const settings = await getOrCreateSettings();
+    // Disable caching for this endpoint
+    res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.json({
+      success: true,
+      fees: {
+        companyRegistrationFee: settings.companyRegistrationFee || 199,
+        creatorOnboardingFee: settings.creatorOnboardingFee || 99
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching fees:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch fees' });
+  }
+});
+
 // UPDATE System Settings
 router.put('/', async (req, res) => {
   try {
@@ -52,6 +75,7 @@ router.put('/', async (req, res) => {
       'platformName', 'supportEmail', 'supportPhone', 
       'platformCommissionPercent', 'boostCommissionPercent', 
       'minWithdrawalAmount', 'creatorOnboardingFee', 'creatorOnboardingFeeEnabled',
+      'companyRegistrationFee', 'companyRegistrationFeeEnabled',
       'currency', 'maintenanceMode', 
       'allowNewRegistrations', 'autoApproveCreators', 
       'autoApproveCastings', 'emailNotifications', 

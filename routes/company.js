@@ -264,13 +264,16 @@ router.put('/:id/reject', async (req, res) => {
   }
 });
 
-// Delete Company
+// Delete Company - Payment history is preserved in CompanyPaymentHistory collection
 router.delete('/:id', async (req, res) => {
   try {
     const company = await Company.findByIdAndDelete(req.params.id);
     if (!company) return res.status(404).json({ message: 'Company not found' });
 
-    res.json({ message: 'Company deleted successfully' });
+    // Payment history is NOT deleted - it's stored separately in CompanyPaymentHistory collection
+    logger.info(`Company deleted: ${company.name} (${company.email}). Payment history preserved.`);
+
+    res.json({ message: 'Company deleted successfully. Payment history has been preserved.' });
   } catch (err) {
     logger.error('Error deleting company:', err);
     res.status(500).json({ message: 'Server Error' });

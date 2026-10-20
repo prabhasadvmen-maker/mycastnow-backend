@@ -73,7 +73,13 @@ const companySchema = new mongoose.Schema({
       verifiedBadge: { type: Boolean, default: true },
       managerSupport: { type: Boolean, default: true }
     }
-  }
+  },
+
+  // Registration Payment
+  registrationPaymentId: { type: String, default: null },
+  registrationOrderId: { type: String, default: null },
+  registrationFee: { type: Number, default: 199 },
+  registrationPaidAt: { type: Date, default: null }
 }, { timestamps: true });
 
 companySchema.pre('save', async function() {
