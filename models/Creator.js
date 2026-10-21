@@ -148,6 +148,7 @@ const creatorSchema = new mongoose.Schema({
   onboardingPaymentId: { type: String },
   onboardingOrderId: { type: String },
   onboardingPaidAt: { type: Date },
+  onboardingFee: { type: Number },
 
   // 8. Stats
   stats: {
