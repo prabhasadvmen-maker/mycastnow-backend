@@ -73,20 +73,23 @@ const allowedOrigins = [
   'https://mycastnow.vercel.app',
   process.env.FRONTEND_URL,
   process.env.R2_PUBLIC_URL,
-].filter(Boolean);
+].filter(Boolean).map((o) => o.trim().replace(/\/+$/, ''));
 
-app.use(cors({
+const corsOptions = {
   origin: (origin, callback) => {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
     logger.warn(`CORS blocked request from: ${origin}`);
-    callback(new Error('Not allowed by CORS'));
+    callback(null, false);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   exposedHeaders: ['Content-Length', 'X-JSON-Response-Size'],
   maxAge: 86400
-}));
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // ── HTTP Request Logger (Morgan → Winston) ───────────────────────────────────
 app.use(morgan('combined', {
