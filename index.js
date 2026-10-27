@@ -10,6 +10,7 @@ import hpp from 'hpp';
 import connectDB from './config/db.js';
 import seedSubscriptionPlans from './config/seed.js';
 import logger from './config/logger.js';
+import { migrateMediaHost } from './utils/migrateMediaHost.js';
 import { initSocket } from './socket.js';
 import Creator from './models/Creator.js';
 import Company from './models/Company.js';
@@ -285,6 +286,12 @@ connectDB()
     }
 
     try {
+      await migrateMediaHost();
+    } catch (hostErr) {
+      logger.warn('Media host migration notice: ' + hostErr.message);
+    }
+
+    try {
       const prodBackend = process.env.BACKEND_URL || 'https://api.mycastnow.com';
       const localhostRegex = /http:\/\/(localhost|127\.0\.0\.1):5000/;
       const creatorsWithLocalhost = await Creator.find({
@@ -314,14 +321,6 @@ connectDB()
     initSocket(server, allowedOrigins);
     server.listen(PORT, () => {
       logger.info(`✅ Server running on port ${PORT} | ENV: ${process.env.NODE_ENV || 'development'}`);
-
-      // Keep-alive: ping self every 30s to prevent Render free tier sleep
-      if (process.env.NODE_ENV === 'production') {
-        const SELF_URL = process.env.RENDER_EXTERNAL_URL || 'https://api.mycastnow.com/api';
-        setInterval(() => {
-          fetch(`${SELF_URL}/health`).catch(() => {});
-        }, 30 * 1000);
-      }
     });
 
     // ── Graceful Shutdown (SIGTERM = Render/Railway deploy, SIGINT = Ctrl+C) ──
