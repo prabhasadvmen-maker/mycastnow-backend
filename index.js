@@ -128,6 +128,21 @@ app.use((req, res, next) => {
   next();
 });
 
+// ── Rewrite legacy Render host in stored media URLs to the production API domain ──
+app.use('/api', (req, res, next) => {
+  const origJson = res.json.bind(res);
+  res.json = (body) => {
+    try {
+      const str = JSON.stringify(body);
+      if (str && str.includes('mycastnow-backend.onrender.com')) {
+        return origJson(JSON.parse(str.replace(/https?:\/\/mycastnow-backend\.onrender\.com/g, 'https://api.mycastnow.com')));
+      }
+    } catch (e) { /* fall through to original body */ }
+    return origJson(body);
+  };
+  next();
+});
+
 // ── Global API Rate Limiter ──────────────────────────────────────────────────
 app.use('/api', apiLimiter);
 

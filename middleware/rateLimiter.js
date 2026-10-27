@@ -6,6 +6,8 @@ export const apiLimiter = rateLimit({
   max: 200,
   standardHeaders: true,
   legacyHeaders: false,
+  // Image/video files: a single page loads many of them, so don't count them (caused 429s)
+  skip: (req) => req.originalUrl.startsWith('/api/upload/file/'),
   message: {
     success: false,
     message: 'Too many requests from this IP, please try again after 15 minutes.'
