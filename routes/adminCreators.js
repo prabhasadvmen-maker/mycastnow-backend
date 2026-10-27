@@ -6,7 +6,7 @@ const router = express.Router();
 
 const sanitizeUrl = (url) => {
   if (!url || typeof url !== 'string') return url;
-  const backend = process.env.BACKEND_URL || 'https://mycastnow-backend.onrender.com';
+  const backend = process.env.BACKEND_URL || 'https://api.mycastnow.com';
   return url.replace(/^http:\/\/(localhost|127\.0\.0\.1):5000/, backend);
 };
 

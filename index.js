@@ -270,7 +270,7 @@ connectDB()
     }
 
     try {
-      const prodBackend = process.env.BACKEND_URL || 'https://mycastnow-backend.onrender.com';
+      const prodBackend = process.env.BACKEND_URL || 'https://api.mycastnow.com';
       const localhostRegex = /http:\/\/(localhost|127\.0\.0\.1):5000/;
       const creatorsWithLocalhost = await Creator.find({
         $or: [
@@ -302,7 +302,7 @@ connectDB()
 
       // Keep-alive: ping self every 30s to prevent Render free tier sleep
       if (process.env.NODE_ENV === 'production') {
-        const SELF_URL = process.env.RENDER_EXTERNAL_URL || 'https://mycastnow-backend.onrender.com/api';
+        const SELF_URL = process.env.RENDER_EXTERNAL_URL || 'https://api.mycastnow.com/api';
         setInterval(() => {
           fetch(`${SELF_URL}/health`).catch(() => {});
         }, 30 * 1000);

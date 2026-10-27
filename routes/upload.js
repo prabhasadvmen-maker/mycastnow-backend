@@ -163,6 +163,9 @@ router.get(/^\/file\/(.+)$/, async (req, res) => {
   try {
     const rawKey = req.params[0];
 
+    // Allow images/videos to be embedded from the frontend origin (fixes ERR_BLOCKED_BY_RESPONSE.NotSameOrigin)
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+
     const normalizedKey = path.normalize(rawKey).replace(/\\/g, '/');
     const allowedPrefixes = ['portfolio/', 'companies/', 'logos/', 'avatars/', 'documents/'];
     if (
